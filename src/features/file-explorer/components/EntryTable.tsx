@@ -104,6 +104,7 @@ export function EntryTable({
           onBackgroundContextMenu(e.clientX, e.clientY);
         }}
       >
+
         <Folder size={28} strokeWidth={1.5} className="text-outline" />
         <p className="text-sm text-on-surface-variant">{emptyTitle}</p>
         <p className="text-xs text-outline">{emptySubtitle}</p>
@@ -174,13 +175,18 @@ export function EntryTable({
           )}
         </tbody>
       </table>
-      {/* Grows to fill whatever's left below the last row, with a sane
-          minimum even when the table already fills the container — without
+      {/* Always-clickable trailing empty space below the last row — without
           this, a folder whose contents exactly fill (or overflow) the view
-          leaves no empty background left to right-click for the New Folder/
-          New File/Paste/Refresh menu. */}
+          leaves no background left to right-click for the New Folder/
+          New File/Paste/Refresh menu. Uses a fixed min-height instead of
+          flex-1, because flex-1 inside a scrollable flex-col behaves
+          inconsistently: it grows when there's room (no scroll), then
+          collapses to zero once the content overflows and the container
+          starts scrolling — causing the scrollbar thumb to change size
+          as you scroll. A fixed min-height always contributes the same
+          amount to the scrollable area. */}
       <div
-        className="min-h-24 flex-1"
+        className="min-h-24"
         onClick={() => onClearSelection()}
         onContextMenu={(e) => {
           if (!onBackgroundContextMenu) return;

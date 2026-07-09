@@ -123,11 +123,17 @@ export function EntryGrid({
   // the scroll lag a folder full of full-resolution images caused — a
   // single decoded <img> bitmap stays cheap; thousands of them mounted at
   // once (even with content-visibility: auto skipping their paint) do not.
+  //
+  // measureElement replaces estimated sizes with actual measured heights
+  // as rows render, so getTotalSize() (and therefore the scrollbar thumb)
+  // stays stable instead of recalculating every time a new row scrolls
+  // into view and gets measured.
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => containerRef.current,
     estimateSize: (i) => (rows[i].kind === "header" ? HEADER_ROW_SIZE : tileRowSize),
     overscan: 4,
+    measureElement: (el) => el.getBoundingClientRect().height,
   });
 
   if (entries.length === 0) {
@@ -153,7 +159,7 @@ export function EntryGrid({
   return (
     <div
       ref={containerRef}
-      className="themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto p-2"
+      className="themed-scroll min-h-0 flex-1 overflow-y-auto p-2 pb-24"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClearSelection();
       }}
@@ -169,12 +175,13 @@ export function EntryGrid({
           return (
             <div
               key={virtualRow.key}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
               style={{
                 position: "absolute",
                 top: 0,
                 left: 0,
                 width: "100%",
-                height: virtualRow.size,
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
@@ -230,21 +237,6 @@ export function EntryGrid({
           );
         })}
       </div>
-      {/* Same "always-clickable trailing empty space" fix as EntryTable —
-          a folder whose tiles exactly fill (or overflow) the view otherwise
-          leaves no background left to right-click. The virtualized content
-          above has an exact pixel height (getTotalSize()), so genuine empty
-          space below it already belongs to this outer container — this
-          spacer just guarantees a minimum amount of it always exists. */}
-      <div
-        className="min-h-24 flex-1"
-        onClick={() => onClearSelection()}
-        onContextMenu={(e) => {
-          if (!onBackgroundContextMenu) return;
-          e.preventDefault();
-          onBackgroundContextMenu(e.clientX, e.clientY);
-        }}
-      />
     </div>
   );
 }
