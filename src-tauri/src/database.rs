@@ -1,0 +1,262 @@
+use rusqlite::{Connection, params};
+use std::path::Path;
+
+// Phase 2 scope only: path/name/extension/size/dates for a working file
+// index. Hashes (Duplicate Detection), tags/favorites, preview cache, and
+// git status are later-phase columns — don't add them here speculatively.
+pub struct FileRow {
+    pub path: String,
+    pub name: String,
+    pub extension: Option<String>,
+    pub is_dir: bool,
+    pub size: u64,
+    pub modified_ms: u64,
+}
+
+pub fn open(db_path: &Path) -> rusqlite::Result<Connection> {
+    let conn = Connection::open(db_path)?;
+    // WAL: better concurrent read/write behavior and crash resilience than
+    // the default rollback journal, at essentially no cost for this workload.
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            extension TEXT,
+            is_dir INTEGER NOT NULL,
+            size INTEGER NOT NULL,
+            modified_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_files_name ON files(name);",
+    )?;
+
+    // Trigram-tokenized FTS5 index over `name`, so a leading-wildcard
+    // substring search (which a plain B-tree index can't accelerate) stays
+    // fast even combined with other filters. Measured live: without this,
+    // a substring search combined with an extension/regex filter took
+    // 4-7+ seconds against a real ~1.5M-row index. `content='files'`/
+    // `content_rowid='id'` makes this an external-content table — it
+    // indexes `name` without duplicating it, staying in sync via the
+    // triggers below rather than being written to directly. Creating the
+    // table/triggers here is always cheap regardless of `files`'s size —
+    // populating an *existing* large `files` table into a brand new
+    // files_fts is not (see `backfill_fts_if_needed`), so that step is
+    // deliberately not done here: this function must stay fast enough to
+    // call from a startup path.
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+            name,
+            content='files',
+            content_rowid='id',
+            tokenize='trigram'
+        );
+        CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
+            INSERT INTO files_fts(rowid, name) VALUES (new.id, new.name);
+        END;
+        CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
+            INSERT INTO files_fts(files_fts, rowid, name) VALUES ('delete', old.id, old.name);
+        END;
+        CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE ON files BEGIN
+            INSERT INTO files_fts(files_fts, rowid, name) VALUES ('delete', old.id, old.name);
+            INSERT INTO files_fts(rowid, name) VALUES (new.id, new.name);
+        END;",
+    )?;
+
+    // Tracks the mtime a path's *content* was last fed into the Tantivy
+    // index (separate from `files`, which tracks filesystem metadata).
+    // Content extraction (parsing a PDF/DOCX/XLSX/PPTX) is far more
+    // expensive than a stat call, and the indexer re-walks every drive on
+    // every launch — without this, every launch would re-extract every
+    // extractable file's content from scratch, which for a real Documents
+    // folder is a real, felt slowdown, not a theoretical one. A path is
+    // only re-extracted when its current modified_ms no longer matches
+    // what's recorded here.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS content_index_state (
+            path TEXT PRIMARY KEY,
+            indexed_mtime INTEGER NOT NULL
+        );",
+    )?;
+
+    Ok(conn)
+}
+
+// None means "never content-indexed" (or the path was removed from
+// `content_index_state`, e.g. after a delete) — the caller should extract.
+pub fn content_indexed_mtime(conn: &Connection, path: &str) -> rusqlite::Result<Option<u64>> {
+    conn.query_row(
+        "SELECT indexed_mtime FROM content_index_state WHERE path = ?1",
+        params![path],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|ms| Some(ms as u64))
+    .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+}
+
+pub fn set_content_indexed_mtime(conn: &Connection, path: &str, modified_ms: u64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO content_index_state (path, indexed_mtime) VALUES (?1, ?2)
+         ON CONFLICT(path) DO UPDATE SET indexed_mtime = excluded.indexed_mtime",
+        params![path, modified_ms as i64],
+    )?;
+    Ok(())
+}
+
+pub fn delete_content_indexed_mtime(conn: &Connection, path: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM content_index_state WHERE path = ?1", params![path])?;
+    Ok(())
+}
+
+// The AFTER INSERT/UPDATE/DELETE triggers only cover rows written from now
+// on — a database that already had `files` populated before files_fts
+// existed (i.e. anyone upgrading from before this was added) needs a
+// one-time backfill via FTS5's built-in 'rebuild' command. Measured live:
+// 118 seconds against a real ~1.5M-row index — far too slow to run inline
+// in `open()`, which is called from Tauri's synchronous `setup()` hook and
+// would block the window from appearing on first launch after this update.
+// Callers must run this from a background thread (the indexer thread does,
+// before its scan loop). A brand new install never pays this cost at all:
+// `files` is empty when the schema is first created, so there's nothing to
+// backfill — the triggers alone keep files_fts current as rows stream in.
+pub fn backfill_fts_if_needed(conn: &Connection) -> rusqlite::Result<()> {
+    let files_count: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
+    let fts_count: i64 = conn.query_row("SELECT COUNT(*) FROM files_fts", [], |r| r.get(0))?;
+    if fts_count != files_count {
+        conn.execute("INSERT INTO files_fts(files_fts) VALUES ('rebuild')", [])?;
+    }
+    Ok(())
+}
+
+const UPSERT_SQL: &str = "INSERT INTO files (path, name, extension, is_dir, size, modified_ms)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(path) DO UPDATE SET
+        name = excluded.name,
+        extension = excluded.extension,
+        is_dir = excluded.is_dir,
+        size = excluded.size,
+        modified_ms = excluded.modified_ms";
+
+pub fn upsert_entry(conn: &Connection, row: &FileRow) -> rusqlite::Result<()> {
+    conn.execute(
+        UPSERT_SQL,
+        params![row.path, row.name, row.extension, row.is_dir as i64, row.size as i64, row.modified_ms as i64],
+    )?;
+    Ok(())
+}
+
+// Batches many rows into one transaction. A bare loop of individual
+// upsert_entry calls (each its own implicit transaction) is an order of
+// magnitude slower for a large initial scan.
+pub fn upsert_batch(conn: &mut Connection, rows: &[FileRow]) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    for row in rows {
+        tx.execute(
+            UPSERT_SQL,
+            params![row.path, row.name, row.extension, row.is_dir as i64, row.size as i64, row.modified_ms as i64],
+        )?;
+    }
+    tx.commit()
+}
+
+pub fn delete_by_path(conn: &Connection, path: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM files WHERE path = ?1", params![path])?;
+    Ok(())
+}
+
+// Test-only: production code reports progress via IndexStatus's in-memory
+// atomics (cheap to poll), not a live SQLite COUNT(*).
+#[cfg(test)]
+pub fn count(conn: &Connection) -> rusqlite::Result<u64> {
+    conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
+        .map(|c| c as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_db(name: &str) -> (std::path::PathBuf, Connection) {
+        let path = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_file(&path);
+        let conn = open(&path).unwrap();
+        (path, conn)
+    }
+
+    fn row(path: &str) -> FileRow {
+        FileRow {
+            path: path.to_string(),
+            name: path.rsplit(['\\', '/']).next().unwrap_or(path).to_string(),
+            extension: None,
+            is_dir: false,
+            size: 42,
+            modified_ms: 1_700_000_000_000,
+        }
+    }
+
+    #[test]
+    fn upsert_then_update_keeps_a_single_row() {
+        let (path, conn) = temp_db("schlag_test_db_upsert.sqlite");
+
+        let mut r = row("C:\\Users\\carlo\\a.txt");
+        upsert_entry(&conn, &r).unwrap();
+        assert_eq!(count(&conn).unwrap(), 1);
+
+        r.size = 100; // same path, changed metadata -> update, not a second row
+        upsert_entry(&conn, &r).unwrap();
+        assert_eq!(count(&conn).unwrap(), 1);
+
+        let stored_size: i64 = conn
+            .query_row("SELECT size FROM files WHERE path = ?1", params![r.path], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored_size, 100);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn delete_by_path_removes_only_that_row() {
+        let (path, mut conn) = temp_db("schlag_test_db_delete.sqlite");
+
+        upsert_batch(&mut conn, &[row("C:\\a.txt"), row("C:\\b.txt")]).unwrap();
+        assert_eq!(count(&conn).unwrap(), 2);
+
+        delete_by_path(&conn, "C:\\a.txt").unwrap();
+        assert_eq!(count(&conn).unwrap(), 1);
+
+        let remaining: String = conn.query_row("SELECT path FROM files", [], |row| row.get(0)).unwrap();
+        assert_eq!(remaining, "C:\\b.txt");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn upsert_batch_commits_all_rows_in_one_transaction() {
+        let (path, mut conn) = temp_db("schlag_test_db_batch.sqlite");
+
+        let rows: Vec<FileRow> = (0..50).map(|i| row(&format!("C:\\file{i}.txt"))).collect();
+        upsert_batch(&mut conn, &rows).unwrap();
+        assert_eq!(count(&conn).unwrap(), 50);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn content_indexed_mtime_round_trips_and_defaults_to_none() {
+        let (path, conn) = temp_db("schlag_test_db_content_state.sqlite");
+
+        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), None);
+
+        set_content_indexed_mtime(&conn, "C:\\a.txt", 1_700_000_000_000).unwrap();
+        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), Some(1_700_000_000_000));
+
+        // Re-setting the same path updates in place, not a second row.
+        set_content_indexed_mtime(&conn, "C:\\a.txt", 1_700_000_500_000).unwrap();
+        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), Some(1_700_000_500_000));
+
+        delete_content_indexed_mtime(&conn, "C:\\a.txt").unwrap();
+        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), None);
+
+        let _ = std::fs::remove_file(&path);
+    }
+}

@@ -1,0 +1,53 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+
+# Rust / Tauri build output (src-tauri/.gitignore already covers
+# src-tauri/target directly; repeated here so `git status` from the repo
+# root doesn't need to know that)
+src-tauri/target/
+
+# Generated mobile scaffolding — not an active target for this Windows
+# desktop app (see plan.md/CLAUDE.md), regenerable via `tauri android init`
+# if that ever changes
+src-tauri/gen/android/
+src-tauri/gen/schemas/
+
+# App-generated index data — lives in the OS app-data dir at runtime
+# ({app_data_dir}/index.db, per CLAUDE.md), never inside the repo, but
+# ignored here too as a guard against a stray copy during local testing
+index.db
+index.db-shm
+index.db-wal
+content_index/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Claude Code / skill local state — machine-specific, not project source
+.claude/
+.impeccable/
