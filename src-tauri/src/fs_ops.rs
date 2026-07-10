@@ -1,6 +1,9 @@
+use crate::database;
+use crate::indexer::ContentEventSender;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 #[derive(Serialize)]
@@ -102,19 +105,24 @@ pub fn list_dir(path: String) -> Result<Vec<Entry>, String> {
 // A pre-check gives one friendly, consistent message for both create_dir and
 // create_file regardless of what already occupies the name.
 #[tauri::command]
-pub fn create_dir(path: String) -> Result<(), String> {
+pub fn create_dir(path: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, _content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
     if Path::new(&path).exists() {
         return Err("A file or folder with that name already exists.".into());
     }
-    fs::create_dir(path).map_err(|e| e.to_string())
+    fs::create_dir(&path).map_err(|e| e.to_string())?;
+    database::index_path(&conn, Path::new(&path));
+    Ok(())
 }
 
 #[tauri::command]
-pub fn create_file(path: String) -> Result<(), String> {
+pub fn create_file(path: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
     if Path::new(&path).exists() {
         return Err("A file or folder with that name already exists.".into());
     }
-    fs::write(path, []).map_err(|e| e.to_string())
+    fs::write(&path, []).map_err(|e| e.to_string())?;
+    database::index_path(&conn, Path::new(&path));
+    content_tx.queue_index(Path::new(&path), 0);
+    Ok(())
 }
 
 // ponytail: same exists()-check guard as create_dir/create_file, for the
@@ -123,47 +131,70 @@ pub fn create_file(path: String) -> Result<(), String> {
 // was already at `to` instead of failing. Renaming a file onto an existing
 // name destroyed that other file outright with no error and no trace.
 #[tauri::command]
-pub fn rename_entry(from: String, to: String) -> Result<(), String> {
+pub fn rename_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
     if Path::new(&to).exists() {
         return Err("A file or folder with that name already exists.".into());
     }
-    fs::rename(from, to).map_err(|e| e.to_string())
+    fs::rename(&from, &to).map_err(|e| e.to_string())?;
+    database::remove_path(&conn, Path::new(&from));
+    database::index_path(&conn, Path::new(&to));
+    content_tx.queue_remove(Path::new(&from));
+    if let Ok(meta) = fs::metadata(&to) {
+        let modified_ms = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+        content_tx.queue_index(Path::new(&to), modified_ms);
+    }
+    Ok(())
 }
 
 // ponytail: trash crate sends to the OS recycle bin instead of a raw
 // fs::remove_*, so "Delete" never destroys data outright.
 #[tauri::command]
-pub fn delete_entry(path: String) -> Result<(), String> {
-    trash::delete(path).map_err(|e| e.to_string())
+pub fn delete_entry(path: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
+    trash::delete(&path).map_err(|e| e.to_string())?;
+    database::remove_path(&conn, Path::new(&path));
+    content_tx.queue_remove(Path::new(&path));
+    Ok(())
 }
 
 #[tauri::command]
-pub fn copy_entry(from: String, to: String) -> Result<(), String> {
+pub fn copy_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
     let from = Path::new(&from);
     let to = unique_destination(Path::new(&to));
     if from.is_dir() {
-        copy_dir_all(from, &to).map_err(|e| e.to_string())
+        copy_dir_all(from, &to).map_err(|e| e.to_string())?;
     } else {
-        fs::copy(from, &to).map(|_| ()).map_err(|e| e.to_string())
+        fs::copy(from, &to).map(|_| ()).map_err(|e| e.to_string())?;
     }
+    index_tree(&conn, &content_tx, &to);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn move_entry(from: String, to: String) -> Result<(), String> {
+pub fn move_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
+    let from_path = PathBuf::from(&from);
     let to = unique_destination(Path::new(&to));
-    if fs::rename(&from, &to).is_ok() {
+    if fs::rename(&from_path, &to).is_ok() {
+        database::remove_path(&conn, &from_path);
+        database::index_path(&conn, &to);
+        content_tx.queue_remove(&from_path);
+        if let Ok(meta) = fs::metadata(&to) {
+            let modified_ms = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+            content_tx.queue_index(&to, modified_ms);
+        }
         return Ok(());
     }
     // ponytail: fs::rename fails across drives/volumes; fall back to
     // copy-then-remove-original. Upgrade to a progress-tracked move if
     // large cross-volume transfers become common.
-    copy_entry(from.clone(), to.to_string_lossy().into_owned())?;
-    let from_path = Path::new(&from);
+    copy_entry_inner(&from_path, &to)?;
     if from_path.is_dir() {
-        fs::remove_dir_all(from_path).map_err(|e| e.to_string())
+        fs::remove_dir_all(&from_path).map_err(|e| e.to_string())?;
     } else {
-        fs::remove_file(from_path).map_err(|e| e.to_string())
+        fs::remove_file(&from_path).map_err(|e| e.to_string())?;
     }
+    database::remove_path(&conn, &from_path);
+    index_tree(&conn, &content_tx, &to);
+    Ok(())
 }
 
 // ponytail: uses the real Win32 ShellExecuteExW API (what Explorer itself
@@ -204,6 +235,79 @@ fn shell_execute_verb(path: &str, verb: &str) -> Result<(), String> {
 #[cfg(not(windows))]
 fn shell_execute_verb(_path: &str, _verb: &str) -> Result<(), String> {
     Err("not supported on this platform".to_string())
+}
+
+// Recursively indexes a path (and all children if it's a directory) into
+// the SQLite search database and queues content events. Called after
+// move/copy operations so the search index reflects the new files
+// immediately, without waiting for the notify watcher.
+fn index_tree(conn: &Mutex<rusqlite::Connection>, content_tx: &ContentEventSender, path: &Path) {
+    database::index_path(conn, path);
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.is_dir() {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.filter_map(Result::ok) {
+                    index_tree(conn, content_tx, &entry.path());
+                }
+            }
+        } else {
+            let modified_ms = meta.modified().ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            content_tx.queue_index(path, modified_ms);
+        }
+    }
+}
+
+// Non-Tauri version of copy_entry for internal use by move_entry's
+// cross-drive fallback. Same logic, just without the #[tauri::command]
+// signature or state injection.
+fn copy_entry_inner(from: &Path, to: &Path) -> Result<(), String> {
+    if from.is_dir() {
+        copy_dir_all(from, to).map_err(|e| e.to_string())
+    } else {
+        fs::copy(from, to).map(|_| ()).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+fn create_dir_inner(path: &str) -> Result<(), String> {
+    if Path::new(path).exists() {
+        return Err("A file or folder with that name already exists.".into());
+    }
+    fs::create_dir(path).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+fn create_file_inner(path: &str) -> Result<(), String> {
+    if Path::new(path).exists() {
+        return Err("A file or folder with that name already exists.".into());
+    }
+    fs::write(path, []).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+fn rename_entry_inner(from: &str, to: &str) -> Result<(), String> {
+    if Path::new(to).exists() {
+        return Err("A file or folder with that name already exists.".into());
+    }
+    fs::rename(from, to).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+fn move_entry_inner(from: &str, to: &str) -> Result<(), String> {
+    let to = unique_destination(Path::new(to));
+    if fs::rename(from, &to).is_ok() {
+        return Ok(());
+    }
+    copy_entry_inner(Path::new(from), &to)?;
+    let from_path = Path::new(from);
+    if from_path.is_dir() {
+        fs::remove_dir_all(from_path).map_err(|e| e.to_string())
+    } else {
+        fs::remove_file(from_path).map_err(|e| e.to_string())
+    }
 }
 
 // Explorer/Finder-style collision handling: "file.txt" -> "file (1).txt",
@@ -278,7 +382,7 @@ mod tests {
         let src_file = base.join("a.txt");
         fs::write(&src_file, b"hello").unwrap();
         let dst_file = base.join("a_copy.txt");
-        copy_entry(path(&src_file), path(&dst_file)).unwrap();
+        copy_entry_inner(&src_file, &dst_file).unwrap();
         assert_eq!(fs::read_to_string(&dst_file).unwrap(), "hello");
 
         let src_dir = base.join("src_dir");
@@ -286,7 +390,7 @@ mod tests {
         fs::write(src_dir.join("root.txt"), b"root").unwrap();
         fs::write(src_dir.join("nested").join("deep.txt"), b"deep").unwrap();
         let dst_dir = base.join("dst_dir");
-        copy_entry(path(&src_dir), path(&dst_dir)).unwrap();
+        copy_entry_inner(&src_dir, &dst_dir).unwrap();
         assert_eq!(fs::read_to_string(dst_dir.join("root.txt")).unwrap(), "root");
         assert_eq!(fs::read_to_string(dst_dir.join("nested").join("deep.txt")).unwrap(), "deep");
 
@@ -302,14 +406,14 @@ mod tests {
         let src_file = base.join("a.txt");
         fs::write(&src_file, b"hello").unwrap();
         // Copying "into" the file's own directory means dest == src.
-        copy_entry(path(&src_file), path(&src_file)).unwrap();
+        copy_entry_inner(&src_file, &src_file).unwrap();
         assert_eq!(fs::read_to_string(base.join("a (1).txt")).unwrap(), "hello");
         assert!(src_file.exists(), "original must be untouched");
 
         let src_dir = base.join("folder");
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(src_dir.join("f.txt"), b"x").unwrap();
-        copy_entry(path(&src_dir), path(&src_dir)).unwrap();
+        copy_entry_inner(&src_dir, &src_dir).unwrap();
         assert!(base.join("folder (1)").join("f.txt").exists());
 
         let _ = fs::remove_dir_all(&base);
@@ -325,7 +429,7 @@ mod tests {
         fs::write(&src, b"move me").unwrap();
         let dst = base.join("moved.txt");
 
-        move_entry(path(&src), path(&dst)).unwrap();
+        move_entry_inner(&path(&src), &path(&dst)).unwrap();
 
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(&dst).unwrap(), "move me");
@@ -342,7 +446,7 @@ mod tests {
         let existing = base.join("a.txt");
         fs::write(&existing, b"keep me").unwrap();
 
-        let err = create_file(path(&existing)).unwrap_err();
+        let err = create_file_inner(&path(&existing)).unwrap_err();
         assert!(err.contains("already exists"));
         assert_eq!(fs::read_to_string(&existing).unwrap(), "keep me");
 
@@ -356,7 +460,7 @@ mod tests {
         let existing_dir = base.join("a");
         fs::create_dir_all(&existing_dir).unwrap();
 
-        let err = create_file(path(&existing_dir)).unwrap_err();
+        let err = create_file_inner(&path(&existing_dir)).unwrap_err();
         assert!(err.contains("already exists"));
         assert!(existing_dir.is_dir());
 
@@ -372,7 +476,7 @@ mod tests {
         let existing = base.join("a.txt");
         fs::write(&existing, b"keep me").unwrap();
 
-        let err = create_dir(path(&existing)).unwrap_err();
+        let err = create_dir_inner(&path(&existing)).unwrap_err();
         assert!(err.contains("already exists"));
         assert!(existing.is_file());
 
@@ -390,7 +494,7 @@ mod tests {
         let existing = base.join("existing.txt");
         fs::write(&existing, b"existing content").unwrap();
 
-        let err = rename_entry(path(&source), path(&existing)).unwrap_err();
+        let err = rename_entry_inner(&path(&source), &path(&existing)).unwrap_err();
         assert!(err.contains("already exists"));
         assert_eq!(fs::read_to_string(&existing).unwrap(), "existing content");
         assert_eq!(fs::read_to_string(&source).unwrap(), "source content");

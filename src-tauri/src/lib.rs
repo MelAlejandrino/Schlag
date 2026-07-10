@@ -42,7 +42,9 @@ pub fn run() {
             });
 
             let drives = fs_ops::list_drives().into_iter().map(|d| d.path).collect();
-            let status = indexer::spawn(db_path, drives, content_index, content_schema);
+            let (content_tx, content_rx) = indexer::create_content_channel();
+            let status = indexer::spawn(db_path, drives, content_index, content_schema, content_tx.clone(), content_rx);
+            app.manage(content_tx);
             app.manage(status);
 
             Ok(())

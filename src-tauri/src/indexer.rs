@@ -18,9 +18,41 @@ use walkdir::WalkDir;
 // content should be dropped from the index (removed, or renamed away).
 // `modified_ms` travels with Index so the content-indexer thread can skip
 // re-extraction without a second stat call.
-enum ContentEvent {
+pub(crate) enum ContentEvent {
     Index(PathBuf, u64),
     Remove(PathBuf),
+}
+
+// Wrapper so Tauri can manage the content-event sender as state — the
+// indexer's own receiver lives on the dedicated content-indexer thread.
+// fs_ops uses this to queue immediate re-indexing after a move/copy/rename,
+// rather than relying solely on the notify watcher (which can drop rename
+// events under heavy churn on Windows).
+#[derive(Clone)]
+pub struct ContentEventSender {
+    tx: std::sync::mpsc::Sender<ContentEvent>,
+}
+
+impl ContentEventSender {
+    pub fn queue_index(&self, path: &Path, modified_ms: u64) {
+        let _ = self.tx.send(ContentEvent::Index(path.to_path_buf(), modified_ms));
+    }
+
+    pub fn queue_remove(&self, path: &Path) {
+        let _ = self.tx.send(ContentEvent::Remove(path.to_path_buf()));
+    }
+
+    // Exposes the raw sender for internal use by the indexer thread and
+    // functions that accept `&Sender<ContentEvent>` (prune_stale_entries,
+    // drain_events, scan_drive, etc.).
+    pub fn sender(&self) -> &std::sync::mpsc::Sender<ContentEvent> {
+        &self.tx
+    }
+}
+
+pub fn create_content_channel() -> (ContentEventSender, std::sync::mpsc::Receiver<ContentEvent>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    (ContentEventSender { tx }, rx)
 }
 
 fn queue_content_event(tx: &Sender<ContentEvent>, path: &Path, extension: Option<&str>, modified_ms: u64) {
@@ -217,7 +249,7 @@ pub fn index_status(status: tauri::State<Arc<IndexStatus>>) -> IndexStatusSnapsh
 // Spawns the one background thread that owns the SQLite connection for the
 // app's lifetime: scans every drive, then watches all of them for changes.
 // Never blocks the caller — returns immediately with a handle to poll status.
-pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, content_schema: ContentSchema) -> Arc<IndexStatus> {
+pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, content_schema: ContentSchema, content_tx: ContentEventSender, content_rx: std::sync::mpsc::Receiver<ContentEvent>) -> Arc<IndexStatus> {
     let status = IndexStatus::new();
     let status_thread = status.clone();
 
@@ -274,15 +306,15 @@ pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, conten
         // owns the Tantivy IndexWriter exclusively (no Mutex needed, unlike
         // the SQLite connection: a writer isn't safely shared across threads
         // the way a Mutex<Connection> already handles).
-        let (content_tx, content_rx) = std::sync::mpsc::channel::<ContentEvent>();
         let content_conn = Arc::clone(&conn);
         let content_status = status_thread.clone();
         std::thread::spawn(move || run_content_indexer(content_conn, content_index, content_schema, content_rx, content_status));
 
-        prune_stale_entries(&conn, &content_tx);
-        prune_stale_content_state(&conn, &content_tx);
+        let inner_tx = content_tx.sender().clone();
+        prune_stale_entries(&conn, &inner_tx);
+        prune_stale_content_state(&conn, &inner_tx);
 
-        let drain_content_tx = content_tx.clone();
+        let drain_content_tx = inner_tx.clone();
         std::thread::spawn(move || drain_events(&drain_conn, rx, &drain_content_tx));
 
         // Scan the user's own files first so useful results exist quickly,
@@ -291,11 +323,11 @@ pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, conten
         // of duplicate (but idempotent) work in exchange for not tracking
         // which paths were already covered.
         if let Ok(home) = crate::fs_ops::home_dir() {
-            scan_drive(&conn, Path::new(&home), &status_thread, &content_tx);
+            scan_drive(&conn, Path::new(&home), &status_thread, &inner_tx);
         }
 
         for drive in &drives {
-            scan_drive(&conn, Path::new(drive), &status_thread, &content_tx);
+            scan_drive(&conn, Path::new(drive), &status_thread, &inner_tx);
         }
         status_thread.scanning.store(false, Ordering::Relaxed);
         tracing::info!(

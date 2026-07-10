@@ -5,6 +5,7 @@ import { formatDate, formatSize } from "../lib/format";
 import { entryTypeLabel } from "../lib/entryType";
 import { startDrag } from "../lib/dnd";
 import { useDropTarget } from "../lib/useDropTarget";
+import { useEntryKeyboard } from "../lib/useEntryKeyboard";
 import type { GroupBy } from "../lib/groupEntries";
 import { toDisplayItems } from "../lib/groupEntries";
 import type { SortDirection, SortKey } from "../lib/sortEntries";
@@ -38,6 +39,12 @@ interface EntryTableProps {
   sortDirection: SortDirection;
   onSortColumnClick: (key: SortKey) => void;
   groupBy: GroupBy;
+  // Keyboard navigation callbacks — direct selection methods so arrow keys
+  // and type-ahead can manipulate selection without simulating click events.
+  onSelectOnly: (path: string) => void;
+  onSelectRange: (path: string) => void;
+  onDelete: () => void;
+  onRename: () => void;
 }
 
 const headerClass = "sticky top-0 bg-surface px-3 py-2 text-left font-mono text-[11px] tracking-wide text-outline uppercase";
@@ -101,6 +108,10 @@ export function EntryTable({
   sortDirection,
   onSortColumnClick,
   groupBy,
+  onSelectOnly,
+  onSelectRange,
+  onDelete,
+  onRename,
 }: EntryTableProps) {
   // Targets the folder being browsed itself — dropping anywhere that isn't
   // a specific row (a row's own drop target, see EntryRow, stops
@@ -109,6 +120,18 @@ export function EntryTable({
   const backgroundDrop = useDropTarget(currentPath, onDrop);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Arrow-key navigation, Enter-to-open, type-ahead jump-to-file.
+  const entryKeyboard = useEntryKeyboard({
+    entries,
+    selectedPaths,
+    onSelectOnly,
+    onSelectRange,
+    onOpen,
+    onDelete,
+    onRename,
+    scrollRef,
+  });
 
   // Scroll the reveal target into view once it's in the rendered listing
   // (from "Open file location"). The matching row carries data-reveal, so
@@ -154,7 +177,9 @@ export function EntryTable({
   return (
     <div
       ref={scrollRef}
-      className={`themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto transition-colors duration-150 ${
+      tabIndex={0}
+      onKeyDown={entryKeyboard.onKeyDown}
+      className={`themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto transition-colors duration-150 outline-none ${
         backgroundDrop.isOver ? "bg-surface-container-low" : ""
       }`}
       onClick={(e) => {
@@ -276,6 +301,7 @@ function EntryRow({ entry, selected, cut, reveal, onOpen, onSelect, onContextMen
     <tr
       draggable
       data-reveal={reveal ? "true" : undefined}
+      data-entry-path={entry.path}
       onDragStart={(e) => startDrag(e, onDragPaths(entry))}
       onClick={(e) => onSelect(entry, e)}
       onDoubleClick={() => onOpen(entry)}

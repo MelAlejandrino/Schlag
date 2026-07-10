@@ -1,5 +1,6 @@
 use rusqlite::{Connection, params};
 use std::path::Path;
+use std::sync::Mutex;
 
 // Phase 2 scope only: path/name/extension/size/dates for a working file
 // index. Hashes (Duplicate Detection), tags/favorites, preview cache, and
@@ -200,6 +201,50 @@ pub fn delete_batch(conn: &mut Connection, paths: &[String]) -> rusqlite::Result
         tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
     }
     tx.commit()
+}
+
+// ---- helpers for fs_ops to directly update the search index ----
+
+// Builds a FileRow from a live filesystem path by stat-ing it. Returns None
+// if the path no longer exists (rapid create+delete) or is unreadable —
+// callers should skip silently, same as the indexer's own row_from_path.
+fn row_from_path(path: &Path) -> Option<FileRow> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Some(FileRow {
+        path: path.to_string_lossy().into_owned(),
+        name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        extension: path.extension().map(|e| e.to_string_lossy().into_owned()),
+        is_dir: meta.is_dir(),
+        size: meta.len(),
+        modified_ms,
+    })
+}
+
+// Immediate SQLite index upsert for a path — called by fs_ops after a
+// successful create/move/copy so the filename search index reflects the
+// change without waiting for the notify watcher to fire.
+pub fn index_path(conn: &Mutex<Connection>, path: &Path) {
+    if let Some(row) = row_from_path(path) {
+        if let Ok(c) = conn.lock() {
+            let _ = upsert_entry(&c, &row);
+        }
+    }
+}
+
+// Immediate SQLite index removal for a path — the companion to index_path
+// for the old path after a rename/move/delete.
+pub fn remove_path(conn: &Mutex<Connection>, path: &Path) {
+    if let Some(p) = path.to_str() {
+        if let Ok(c) = conn.lock() {
+            let _ = delete_by_path(&c, p);
+        }
+    }
 }
 
 // Test-only: production code reports progress via IndexStatus's in-memory

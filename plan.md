@@ -690,16 +690,13 @@ Preview UI is a resizable right-side panel (`PreviewPane.tsx`), mirroring the re
 
 Power Features
 
-- Tabs ✅ — multiple open folder locations in one window, each with its own current path / back-forward history / selection. Store reorganized so `tabs: Tab[]` + `activeTabId` are the source of truth with the old top-level fields as a live mirror of the active tab (see `CLAUDE.md`), so almost no consumers changed. Includes: new-tab (+) button, click-to-switch, close (×), a tab context menu (Duplicate / Close), "Open in new tab" on folder rows + Sidebar items, drag-to-reorder (live during drag), and drag-a-file-onto-a-background-tab to switch + drop into it. Not persisted across launches (that's Workspace restore, below). Keyboard shortcuts (Ctrl+T / Ctrl+W) deliberately deferred to Phase 6's hotkey system, same as every other shortcut.
+- Tabs ✅ — multiple open folder locations in one window, each with its own current path / back-forward history / selection. Store reorganized so `tabs: Tab[]` + `activeTabId` are the source of truth with the old top-level fields as a live mirror of the active tab (see `CLAUDE.md`), so almost no consumers changed. Includes: new-tab (+) button, click-to-switch, close (×), a tab context menu (Duplicate / Close), "Open in new tab" on folder rows + Sidebar items, drag-to-reorder (live during drag), and drag-a-file-onto-a-background-tab to switch + drop into it. Not persisted across launches (that's Workspace restore, Phase 7). Keyboard shortcuts (Ctrl+T / Ctrl+W) deliberately deferred to Phase 6's hotkey system, same as every other shortcut.
 - Custom title bar ✅ — **not originally a planned item**; built alongside Tabs once the tab strip existed to host it. Native OS window chrome removed (`decorations: false`); the tab bar doubles as the title bar with window controls (minimize/maximize/close), a drag region, and JS resize handles. See `CLAUDE.md`'s Window chrome note.
 - Sidebar context menus ✅ — right-click Quick Access / Drives / Favorites for Open / Open in new tab / Add-or-Remove Favorite / Properties. (Previously right-click did nothing on Sidebar items; this replaces that non-behavior now that "Open in new tab" gave it a clear use case.)
-- Split panes
 - Favorites ✅ (built in Phase 1, not Phase 5 — folder/file starring, `file-explorer.store.ts`'s `favorites: string[]`, persisted, shown in `Sidebar`/`ThisPCView`, toggled via the context menu and `Toolbar`. This bullet was stale until now — never crossed off despite shipping years of checklist-time ago.)
-- Tags
-- Workspace restore (would also make Tabs survive a relaunch — currently they reset to one "This PC" tab on launch)
-- Git integration
-- Duplicate detection
-- Bulk rename
+- Direct index updates after file operations ✅ — `move_entry`/`copy_entry`/`delete_entry`/`rename_entry`/`create_dir`/`create_file` in `fs_ops.rs` now directly update the SQLite search index and queue Tantivy content events immediately after the filesystem operation, rather than relying solely on the `notify` watcher (which can silently drop events on Windows under heavy churn). See `CLAUDE.md`'s Indexing section.
+
+Phase 5 is complete. The remaining items (Split panes, Tags, Workspace restore, Git integration, Duplicate detection, Bulk rename) have been moved to Phase 7.
 
 ---
 
@@ -707,22 +704,35 @@ Power Features
 
 Polish
 
-- Keyboard shortcuts
-- Settings
-- Theme
-- Performance optimization
-- Accessibility
-- Auto updates
+- Keyboard shortcuts — Ctrl+T / Ctrl+W (new/close tab), Ctrl+F / Ctrl+L (search/focus address bar), Space (quick preview), F2 (rename), Delete (trash), Ctrl+C / Ctrl+X / Ctrl+V (copy/cut/paste), Ctrl+D (toggle favorite), Escape (close modal/pane)
+- Settings panel — app preferences UI (excluded directories, default sort/view, startup behavior)
+- Theme system — light/dark toggle, user-selectable accent colors
+- Performance optimization — virtual scrolling for large directories, lazy icon loading, memory profiling
+- Accessibility — keyboard-only navigation, screen-reader labels, focus indicators, high-contrast support
+- Auto updates — `tauri-plugin-updater` integration
 
 ---
 
 ## Phase 7
 
+Advanced Features
+
+- Split panes — side-by-side folder view within the same window
+- Tags — colored/custom tags, multiple tags per file, stored in SQLite
+- Workspace restore — persist and restore tabs, split panes, window size, sidebar state across launches
+- Git integration — show modified/added/deleted/ignored/untracked status per file while browsing repositories
+- Duplicate detection — group-by-size → xxHash → SHA256 pipeline, avoid hashing every file
+- Bulk rename — rename multiple files at once with pattern/regex/counter support
+
+---
+
+## Phase 8
+
 AI
 
-- Semantic Search
-- Natural language search
-- AI organization
+- Semantic Search — vector-embedded search over file contents and names
+- Natural language search — query files using conversational language
+- AI organization — smart folder suggestions, auto-tagging, content-based grouping
 
 ---
 
@@ -806,3 +816,5 @@ The project is successful if users can:
 The guiding principle is simple:
 
 > **Every interaction should feel immediate.**
+
+<!-- TO BE ADDED: ATTACH FUNCTION, SCALE DATABASE MULTIPLE SQL FILES BUT IGNORE THIS FOR NOW -->

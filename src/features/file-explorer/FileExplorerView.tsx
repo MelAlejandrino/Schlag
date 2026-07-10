@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { AlertCircle, X } from "lucide-react";
 import { useFileExplorer } from "./useFileExplorer";
 import { useSearch } from "./useSearch";
+import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
@@ -19,6 +20,20 @@ import { WindowResizeHandles } from "./components/WindowResizeHandles";
 export function FileExplorerView() {
   const explorer = useFileExplorer();
   const search = useSearch();
+
+  useKeyboardShortcuts({
+    onRefresh: explorer.refresh,
+    onOpenSearch: search.openSearch,
+    onNewFolder: explorer.newFolder,
+    onNewFile: explorer.newFile,
+    onRename: explorer.renameSelected,
+    onDelete: explorer.deleteSelected,
+    onToggleFavorite: explorer.toggleCurrentFavorite,
+    onTogglePreview: explorer.togglePreview,
+    onCopy: explorer.copySelected,
+    onCut: explorer.cutSelected,
+    onPaste: explorer.pasteIntoCurrent,
+  });
 
   useEffect(() => {
     if (!explorer.contextMenu) return;
@@ -135,6 +150,10 @@ export function FileExplorerView() {
               sortDirection={explorer.sortDirection}
               onSortColumnClick={explorer.onSortColumnClick}
               groupBy={explorer.groupBy}
+              onSelectOnly={explorer.selectOnly}
+              onSelectRange={explorer.selectRange}
+              onDelete={explorer.deleteSelected}
+              onRename={explorer.renameSelected}
             />
           ) : (
             <EntryGrid
@@ -153,6 +172,10 @@ export function FileExplorerView() {
               onBackgroundContextMenu={explorer.openBackgroundContextMenu}
               groupBy={explorer.groupBy}
               size={explorer.viewMode}
+              onSelectOnly={explorer.selectOnly}
+              onSelectRange={explorer.selectRange}
+              onDelete={explorer.deleteSelected}
+              onRename={explorer.renameSelected}
             />
           )}
         </main>

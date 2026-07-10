@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Folder } from "lucide-react";
 import { startDrag } from "../lib/dnd";
 import { useDropTarget } from "../lib/useDropTarget";
+import { useEntryKeyboard } from "../lib/useEntryKeyboard";
 import { previewKind } from "../lib/previewKind";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
 import { fileExplorerService } from "../services/file-explorer.service";
@@ -13,8 +14,6 @@ import type { Entry } from "../file-explorer.types";
 interface EntryGridProps {
   entries: Entry[];
   selectedPaths: string[];
-  // The folder currently being browsed — lets dropping onto empty space
-  // (not a specific tile) move/copy into it, same as real Explorer.
   currentPath: string;
   onOpen: (entry: Entry) => void;
   onSelect: (entry: Entry, mods: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void;
@@ -24,16 +23,16 @@ interface EntryGridProps {
   onDrop: (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
   onBackgroundContextMenu?: (x: number, y: number) => void;
   cutPaths?: string[];
-  // A path to scroll into view once rendered (from "Open file location") —
-  // cleared via onRevealed the moment it's handled, so it fires once.
   revealPath?: string | null;
   onRevealed?: () => void;
   emptyTitle?: string;
   emptySubtitle?: string;
   groupBy: GroupBy;
-  // Tile sizing is the only real difference between Medium and Large icons —
-  // one parameterized component instead of two near-duplicate ones.
   size: "medium" | "large";
+  onSelectOnly: (path: string) => void;
+  onSelectRange: (path: string) => void;
+  onDelete: () => void;
+  onRename: () => void;
 }
 
 const TILE_SIZE: Record<EntryGridProps["size"], { tile: number; icon: number }> = {
@@ -100,15 +99,28 @@ export function EntryGrid({
   emptySubtitle = "Drag files in, or use New Folder / New File above",
   groupBy,
   size,
+  onSelectOnly,
+  onSelectRange,
+  onDelete,
+  onRename,
 }: EntryGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { tile, icon } = TILE_SIZE[size];
   const [columns, setColumns] = useState(1);
-  // Targets the folder being browsed itself — dropping anywhere that isn't
-  // a specific tile (a tile's own drop target, see EntryTile, stops
-  // propagation so this doesn't also fire underneath it) moves/copies into
-  // the current folder, same as real Explorer's own background-drop.
   const backgroundDrop = useDropTarget(currentPath, onDrop);
+
+  // Arrow-key navigation, Enter-to-open, type-ahead jump-to-file.
+  const entryKeyboard = useEntryKeyboard({
+    entries,
+    selectedPaths,
+    onSelectOnly,
+    onSelectRange,
+    onOpen,
+    onDelete,
+    onRename,
+    columns,
+    scrollRef: containerRef,
+  });
 
   // useLayoutEffect (not useEffect) so the column count is right before the
   // first paint — otherwise there'd be a visible flash of a 1-column layout
@@ -192,7 +204,9 @@ export function EntryGrid({
   return (
     <div
       ref={containerRef}
-      className={`themed-scroll min-h-0 flex-1 overflow-y-auto p-2 pb-24 transition-colors duration-150 ${
+      tabIndex={0}
+      onKeyDown={entryKeyboard.onKeyDown}
+      className={`themed-scroll min-h-0 flex-1 overflow-y-auto p-2 pb-24 transition-colors duration-150 outline-none ${
         backgroundDrop.isOver ? "bg-surface-container-low" : ""
       }`}
       onClick={(e) => {
@@ -319,6 +333,7 @@ function EntryTile({ entry, iconSize, selected, cut, onOpen, onSelect, onContext
   return (
     <div
       draggable
+      data-entry-path={entry.path}
       onDragStart={(e) => startDrag(e, onDragPaths(entry))}
       onClick={(e) => onSelect(entry, e)}
       onDoubleClick={() => onOpen(entry)}
