@@ -100,8 +100,53 @@ export function SearchModal() {
 
   const activeResults: SearchResult[] = search.mode === "content" ? search.orderedContentResults : search.orderedResults;
 
+  // Refs mirror the latest render values so the window keydown listener below
+  // (attached once per open) reads current results/highlight without going
+  // stale, instead of re-attaching on every change.
+  const activeResultsRef = useRef(activeResults);
+  activeResultsRef.current = activeResults;
+  const highlightedRef = useRef(highlighted);
+  highlightedRef.current = highlighted;
+  const openResultRef = useRef(search.openResult);
+  openResultRef.current = search.openResult;
+
   useEffect(() => {
     if (search.isOpen) inputRef.current?.focus();
+  }, [search.isOpen]);
+
+  // List navigation lives on a `window` listener, NOT the dialog's onKeyDown,
+  // because that only fires while focus is inside the dialog — and clicking a
+  // (non-focusable) result row drops focus to <body>, after which ArrowUp/Down
+  // fell through to the browser's default scroll instead of moving the
+  // highlight. A window listener works regardless of where focus is. Only
+  // armed while the modal is open. (Combobox in the filters section
+  // stopPropagations its own Escape, so this never closes the modal out from
+  // under it.)
+  useEffect(() => {
+    if (!search.isOpen) return;
+    // Explicitly the DOM KeyboardEvent — this file imports React's synthetic
+    // KeyboardEvent type by the same name for the dialog's onKeyDown, but a
+    // window listener gets the native one.
+    function onKey(e: globalThis.KeyboardEvent) {
+      const results = activeResultsRef.current;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlighted((h) => Math.min(h + 1, Math.max(0, results.length - 1)));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlighted((h) => Math.max(h - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const item = results[highlightedRef.current];
+        if (item) openResultRef.current(item);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        search.closeSearch();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.isOpen]);
 
   // Same click-outside-closes pattern FileExplorerView uses for the normal
@@ -135,27 +180,10 @@ export function SearchModal() {
   if (!search.isOpen) return null;
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      search.closeSearch();
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHighlighted((h) => Math.min(h + 1, activeResults.length - 1));
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlighted((h) => Math.max(h - 1, 0));
-      return;
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const item = activeResults[highlighted];
-      if (item) search.openResult(item);
-      return;
-    }
+    // Arrow/Enter/Escape navigation lives on the window keydown listener
+    // above (works regardless of focus — see that effect's comment). This
+    // dialog-level handler is now ONLY the Tab focus-trap, which is
+    // inherently focus-relative and must stay here.
     // Result rows aren't in the tab sequence at all (arrow keys manage a
     // "virtual" highlight while real focus stays on the input, per the
     // combobox/listbox ARIA pattern) — this only needs to cycle between the
@@ -201,7 +229,17 @@ export function SearchModal() {
         aria-modal="true"
         aria-label="Search"
         className="animate-dialog-in flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-surface-container-highest bg-surface-container-high shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        // stopPropagation keeps an in-dialog click from reaching the
+        // backdrop (which closes the whole search). But that also means such
+        // clicks never reach the window listener that closes the result
+        // context menu — so close it here instead: any click inside the
+        // dialog dismisses an open menu. Menu-item clicks live in a separate
+        // sibling subtree (see the resultMenu wrapper below, which stops its
+        // own propagation), so they don't trigger this.
+        onClick={(e) => {
+          e.stopPropagation();
+          if (resultMenu) setResultMenu(null);
+        }}
         onKeyDown={handleKeyDown}
       >
         <div className="border-b border-surface-container-highest">
@@ -387,8 +425,14 @@ function SearchResultRow({ item, index, highlighted, onHover, onOpen, onContextM
       data-index={index}
       role="option"
       aria-selected={highlighted}
+      // Hover previews the selection (moves the highlight here), so ↑/↓ and
+      // Enter act on whatever the pointer is over. Single click intentionally
+      // does nothing — opening is double-click or Enter only, matching
+      // EntryTable/EntryGrid's model, so a stray click can't fire off the
+      // wrong file. Arrow navigation works regardless of focus via the
+      // window keydown listener, so no focus-retention hack is needed here.
       onMouseEnter={onHover}
-      onClick={onOpen}
+      onDoubleClick={onOpen}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
