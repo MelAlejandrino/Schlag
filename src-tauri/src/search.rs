@@ -202,6 +202,35 @@ pub fn search_files(
     run_query(&conn, &query, &filters, keyword_mode).map_err(|e| e.to_string())
 }
 
+const RECENT_FILES_LIMIT: i64 = 10;
+
+// ponytail: a plain global sort by modified_ms, no per-app noise filtering
+// (a browser's constantly-rewritten profile files would show up if they're
+// genuinely the newest) — not requested, add a filter if this proves noisy
+// in practice.
+fn run_recent_files(conn: &Connection) -> rusqlite::Result<Vec<Entry>> {
+    let mut stmt = conn.prepare(
+        "SELECT path, name, is_dir, size, modified_ms FROM files \
+         WHERE is_dir = 0 ORDER BY modified_ms DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([RECENT_FILES_LIMIT], |row| {
+        Ok(Entry {
+            path: row.get(0)?,
+            name: row.get(1)?,
+            is_dir: row.get::<_, i64>(2)? != 0,
+            size: row.get::<_, i64>(3)? as u64,
+            modified_ms: row.get::<_, i64>(4)? as u64,
+        })
+    })?;
+    rows.collect()
+}
+
+#[tauri::command]
+pub fn recent_files(conn: tauri::State<Mutex<Connection>>) -> Result<Vec<Entry>, String> {
+    let conn = conn.lock().map_err(|e| e.to_string())?;
+    run_recent_files(&conn).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,6 +537,47 @@ mod tests {
         let results = run_query(&conn, "report", &filters, false).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "report.txt");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn recent_files_excludes_dirs_orders_newest_first_and_respects_the_limit() {
+        let path = std::env::temp_dir().join("schlag_test_recent_files.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let mut conn = database::open(&path).unwrap();
+
+        // 15 files, oldest to newest by index, plus one directory with a
+        // modified_ms newer than every file — it must never appear.
+        let mut rows: Vec<database::FileRow> = (0..15)
+            .map(|i| database::FileRow {
+                path: format!("C:\\recent\\file{i}.txt"),
+                name: format!("file{i}.txt"),
+                extension: Some("txt".to_string()),
+                is_dir: false,
+                size: 10,
+                modified_ms: 1_700_000_000_000 + i as u64 * 1000,
+            })
+            .collect();
+        rows.push(database::FileRow {
+            path: "C:\\recent\\a_newer_folder".to_string(),
+            name: "a_newer_folder".to_string(),
+            extension: None,
+            is_dir: true,
+            size: 0,
+            modified_ms: 9_999_999_999_999,
+        });
+        database::upsert_batch(&mut conn, &rows).unwrap();
+
+        let results = run_recent_files(&conn).unwrap();
+
+        assert_eq!(results.len(), RECENT_FILES_LIMIT as usize);
+        assert!(results.iter().all(|e| !e.is_dir), "a directory must never appear in a files-only recent list");
+        assert_eq!(results[0].name, "file14.txt", "newest file must come first");
+        assert_eq!(results.last().unwrap().name, "file5.txt", "only the 10 newest files should be returned");
+        for pair in results.windows(2) {
+            assert!(pair[0].modified_ms >= pair[1].modified_ms, "results must be strictly newest-first");
+        }
+
         let _ = std::fs::remove_file(&path);
     }
 

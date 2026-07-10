@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Folder } from "lucide-react";
 import { startDrag } from "../lib/dnd";
@@ -13,6 +13,9 @@ import type { Entry } from "../file-explorer.types";
 interface EntryGridProps {
   entries: Entry[];
   selectedPaths: string[];
+  // The folder currently being browsed — lets dropping onto empty space
+  // (not a specific tile) move/copy into it, same as real Explorer.
+  currentPath: string;
   onOpen: (entry: Entry) => void;
   onSelect: (entry: Entry, mods: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
@@ -21,6 +24,10 @@ interface EntryGridProps {
   onDrop: (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
   onBackgroundContextMenu?: (x: number, y: number) => void;
   cutPaths?: string[];
+  // A path to scroll into view once rendered (from "Open file location") —
+  // cleared via onRevealed the moment it's handled, so it fires once.
+  revealPath?: string | null;
+  onRevealed?: () => void;
   emptyTitle?: string;
   emptySubtitle?: string;
   groupBy: GroupBy;
@@ -78,6 +85,7 @@ function buildRows(items: DisplayItem[], columns: number): Row[] {
 export function EntryGrid({
   entries,
   selectedPaths,
+  currentPath,
   onOpen,
   onSelect,
   onContextMenu,
@@ -86,6 +94,8 @@ export function EntryGrid({
   onDrop,
   onBackgroundContextMenu,
   cutPaths = [],
+  revealPath,
+  onRevealed,
   emptyTitle = "Nothing here yet",
   emptySubtitle = "Drag files in, or use New Folder / New File above",
   groupBy,
@@ -94,6 +104,11 @@ export function EntryGrid({
   const containerRef = useRef<HTMLDivElement>(null);
   const { tile, icon } = TILE_SIZE[size];
   const [columns, setColumns] = useState(1);
+  // Targets the folder being browsed itself — dropping anywhere that isn't
+  // a specific tile (a tile's own drop target, see EntryTile, stops
+  // propagation so this doesn't also fire underneath it) moves/copies into
+  // the current folder, same as real Explorer's own background-drop.
+  const backgroundDrop = useDropTarget(currentPath, onDrop);
 
   // useLayoutEffect (not useEffect) so the column count is right before the
   // first paint — otherwise there'd be a visible flash of a 1-column layout
@@ -136,10 +151,25 @@ export function EntryGrid({
     measureElement: (el) => el.getBoundingClientRect().height,
   });
 
+  // Scroll the reveal target into view (from "Open file location"). Unlike
+  // EntryTable, the target row may not be mounted at all (virtualized), so a
+  // DOM scrollIntoView won't work — the virtualizer's own scrollToIndex is
+  // what actually brings an off-screen row on-screen. Find the tile row that
+  // holds the path, then center it. Cleared immediately so it fires once.
+  useEffect(() => {
+    if (!revealPath) return;
+    const rowIndex = rows.findIndex((r) => r.kind === "tiles" && r.entries.some((e) => e.path === revealPath));
+    if (rowIndex !== -1) virtualizer.scrollToIndex(rowIndex, { align: "center" });
+    onRevealed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealPath, rows]);
+
   if (entries.length === 0) {
     return (
       <div
-        className="themed-scroll flex min-h-0 flex-1 flex-col items-center justify-center gap-1 overflow-y-auto text-center"
+        className={`themed-scroll flex min-h-0 flex-1 flex-col items-center justify-center gap-1 overflow-y-auto text-center transition-colors duration-150 ${
+          backgroundDrop.isOver ? "bg-surface-container-low" : ""
+        }`}
         onClick={(e) => {
           if (e.target === e.currentTarget) onClearSelection();
         }}
@@ -148,6 +178,9 @@ export function EntryGrid({
           e.preventDefault();
           onBackgroundContextMenu(e.clientX, e.clientY);
         }}
+        onDragOver={backgroundDrop.onDragOver}
+        onDragLeave={backgroundDrop.onDragLeave}
+        onDrop={backgroundDrop.onDrop}
       >
         <Folder size={28} strokeWidth={1.5} className="text-outline" />
         <p className="text-sm text-on-surface-variant">{emptyTitle}</p>
@@ -159,7 +192,9 @@ export function EntryGrid({
   return (
     <div
       ref={containerRef}
-      className="themed-scroll min-h-0 flex-1 overflow-y-auto p-2 pb-24"
+      className={`themed-scroll min-h-0 flex-1 overflow-y-auto p-2 pb-24 transition-colors duration-150 ${
+        backgroundDrop.isOver ? "bg-surface-container-low" : ""
+      }`}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClearSelection();
       }}
@@ -168,6 +203,9 @@ export function EntryGrid({
         e.preventDefault();
         onBackgroundContextMenu(e.clientX, e.clientY);
       }}
+      onDragOver={backgroundDrop.onDragOver}
+      onDragLeave={backgroundDrop.onDragLeave}
+      onDrop={backgroundDrop.onDrop}
     >
       <div style={{ position: "relative", width: "100%", height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -255,8 +293,21 @@ interface EntryTileProps {
 
 function EntryTile({ entry, iconSize, selected, cut, onOpen, onSelect, onContextMenu, onDragPaths, onDrop }: EntryTileProps) {
   const dropTarget = useDropTarget(entry.path, onDrop);
+  // Stops propagation so a drop that lands on this specific tile doesn't
+  // also bubble up and re-trigger the grid's own background drop (which
+  // targets the currently browsed folder, not this tile's folder).
   const dropProps = entry.is_dir
-    ? { onDragOver: dropTarget.onDragOver, onDragLeave: dropTarget.onDragLeave, onDrop: dropTarget.onDrop }
+    ? {
+        onDragOver: (e: DragEvent<HTMLDivElement>) => {
+          dropTarget.onDragOver(e);
+          e.stopPropagation();
+        },
+        onDragLeave: dropTarget.onDragLeave,
+        onDrop: (e: DragEvent<HTMLDivElement>) => {
+          dropTarget.onDrop(e);
+          e.stopPropagation();
+        },
+      }
     : {};
   // A broken/corrupt image file, a permissions issue, or a decode failure
   // needs to fall back to the generic icon, not a broken-image glyph — this

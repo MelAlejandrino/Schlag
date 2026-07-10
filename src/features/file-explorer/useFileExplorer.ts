@@ -64,8 +64,14 @@ export function useFileExplorer() {
     openEntryWith(selectedEntries[0]);
   }
 
+  // Split out from showEntryProperties so the sidebar (whose items are
+  // {name, path} pairs, not full Entry objects) can reuse it directly.
+  function showPropertiesForPath(path: string) {
+    fileExplorerService.showProperties(path).catch((e) => useFileExplorerStore.setState({ error: String(e) }));
+  }
+
   function showEntryProperties(entry: Entry) {
-    fileExplorerService.showProperties(entry.path).catch((e) => useFileExplorerStore.setState({ error: String(e) }));
+    showPropertiesForPath(entry.path);
   }
 
   function showPropertiesSelected() {
@@ -84,11 +90,28 @@ export function useFileExplorer() {
     const parent = dirname(entry.path);
     await store.navigate(parent === "" ? THIS_PC : parent);
     store.selectOnly(entry.path);
+    // Not enough to just select it — the folder can hold thousands of
+    // entries and the target is often off-screen. revealPath tells the
+    // listing to scroll it into view once it renders (see EntryTable/
+    // EntryGrid), then clears itself so it fires exactly once.
+    store.setRevealPath(entry.path);
   }
 
   function openLocationSelected() {
     if (selectedEntries.length !== 1) return;
     openFileLocation(selectedEntries[0]);
+  }
+
+  // Folders only — a file has nowhere to "open a tab to." Mirrors the
+  // explicit-entry/selected-entry pair shape every other single-target
+  // action here already uses (openEntryWith/openWithSelected, etc.).
+  function openInNewTab(entry: Entry) {
+    store.newTab(entry.path);
+  }
+
+  function openSelectedInNewTab() {
+    if (selectedEntries.length !== 1 || !selectedEntries[0].is_dir) return;
+    openInNewTab(selectedEntries[0]);
   }
 
   function selectEntry(entry: Entry, mods: SelectModifiers) {
@@ -113,13 +136,24 @@ export function useFileExplorer() {
   }
 
   async function dropOnto(sourcePaths: string[], targetPath: string, isCopy: boolean) {
+    // This PC has no real folder to move/copy into — guarded here rather
+    // than at each call site, since TabBar's drag-to-switch-tabs can now
+    // land a drop on a tab that's sitting at THIS_PC.
+    if (targetPath === THIS_PC) return;
     const op = isCopy ? fileExplorerService.copyEntry : fileExplorerService.moveEntry;
     const items = sourcePaths.filter((p) => p !== targetPath && dirname(p) !== targetPath);
     if (items.length === 0) return;
     try {
       await Promise.all(items.map((p) => op(p, joinPath(targetPath, basename(p)))));
       store.clearSelection();
-      store.refresh();
+      // refreshTabsShowing (not just refresh()) since dropping onto another
+      // tab (TabBar's drag-to-switch) already made that tab active by the
+      // time this runs — a plain refresh() only catches the destination;
+      // the tab the file came *from* is now a background tab and needs
+      // refreshing too, or it keeps showing the file until manually
+      // refreshed. Skipped for a copy — the source is untouched.
+      const affected = new Set(isCopy ? [targetPath] : [targetPath, ...items.map((p) => dirname(p))]);
+      store.refreshTabsShowing([...affected]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
     }
@@ -203,7 +237,12 @@ export function useFileExplorer() {
     try {
       await Promise.all(paths.map((p) => op(p, joinPath(store.currentPath, basename(p)))));
       if (clip.op === "cut") store.clearClipboard();
-      store.refresh();
+      // A cut can be copied in one tab, then pasted after switching to
+      // another — refreshTabsShowing catches the (now background) source
+      // tab too, not just this one. Skipped for a copy, same reasoning as
+      // dropOnto: the source is untouched.
+      const affected = clip.op === "copy" ? [store.currentPath] : [store.currentPath, ...paths.map((p) => dirname(p))];
+      store.refreshTabsShowing([...new Set(affected)]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
     }
@@ -218,8 +257,10 @@ export function useFileExplorer() {
     const kind = store.activePrompt;
     if (!kind) return;
 
+    let affectedFolder: string;
     if (kind === "new-folder" || kind === "new-file") {
-      const path = joinPath(store.currentPath, value);
+      affectedFolder = store.currentPath;
+      const path = joinPath(affectedFolder, value);
       if (kind === "new-folder") await fileExplorerService.createDir(path);
       else await fileExplorerService.createFile(path);
     } else {
@@ -229,11 +270,14 @@ export function useFileExplorer() {
         store.closePrompt();
         return;
       }
-      await fileExplorerService.renameEntry(entry.path, joinPath(dirname(entry.path), value));
+      // Renaming a search result targets whatever folder it actually lives
+      // in, not necessarily the active tab's own currentPath.
+      affectedFolder = dirname(entry.path);
+      await fileExplorerService.renameEntry(entry.path, joinPath(affectedFolder, value));
     }
 
     store.closePrompt();
-    store.refresh();
+    store.refreshTabsShowing([affectedFolder]);
   }
 
   // `promptTarget` (set by renameEntry(), the search-result entry point)
@@ -264,7 +308,10 @@ export function useFileExplorer() {
     try {
       await Promise.all(deleteEntries.map((e) => fileExplorerService.deleteEntry(e.path)));
       store.clearSelection();
-      store.refresh();
+      // Deleting a search result targets whatever folder it actually lives
+      // in — refreshTabsShowing catches any other tab open on that folder,
+      // not just the active one.
+      store.refreshTabsShowing([...new Set(deleteEntries.map((e) => dirname(e.path)))]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
     } finally {
@@ -289,6 +336,7 @@ export function useFileExplorer() {
     openWithSelected,
     showPropertiesSelected,
     openLocationSelected,
+    openSelectedInNewTab,
     selectEntry,
     openContextMenuForEntry,
     openBackgroundContextMenu,
@@ -310,7 +358,9 @@ export function useFileExplorer() {
     // openEntryWith for why these can't just reuse the "*Selected" ones.
     openEntryWith,
     showEntryProperties,
+    showPropertiesForPath,
     openFileLocation,
+    openInNewTab,
     renameEntry,
     copyEntryToClipboard,
     cutEntryToClipboard,

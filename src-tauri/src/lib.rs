@@ -62,6 +62,7 @@ pub fn run() {
             fs_ops::show_properties,
             indexer::index_status,
             search::search_files,
+            search::recent_files,
             content_index::search_content,
             preview::preview_text,
             preview::list_archive_entries,

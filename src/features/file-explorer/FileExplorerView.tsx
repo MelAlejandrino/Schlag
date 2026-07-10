@@ -3,6 +3,7 @@ import { AlertCircle, X } from "lucide-react";
 import { useFileExplorer } from "./useFileExplorer";
 import { useSearch } from "./useSearch";
 import { Sidebar } from "./components/Sidebar";
+import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { EntryTable } from "./components/EntryTable";
 import { EntryGrid } from "./components/EntryGrid";
@@ -13,6 +14,7 @@ import { IndexStatusBadge } from "./components/IndexStatusBadge";
 import { PromptModal } from "./components/PromptModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { SearchModal } from "./components/SearchModal";
+import { WindowResizeHandles } from "./components/WindowResizeHandles";
 
 export function FileExplorerView() {
   const explorer = useFileExplorer();
@@ -34,6 +36,16 @@ export function FileExplorerView() {
       className="flex h-screen flex-col overflow-hidden bg-surface text-on-surface"
       onContextMenu={(e) => e.preventDefault()}
     >
+      <TabBar
+        tabs={explorer.tabs}
+        activeTabId={explorer.activeTabId}
+        onSwitchTab={explorer.switchTab}
+        onCloseTab={explorer.closeTab}
+        onNewTab={explorer.newTab}
+        onReorderTab={explorer.reorderTabs}
+        onDrop={explorer.dropOnto}
+      />
+
       <Toolbar
         canGoBack={explorer.canGoBack}
         canGoForward={explorer.canGoForward}
@@ -76,6 +88,9 @@ export function FileExplorerView() {
           onNavigate={explorer.navigate}
           onUnstar={explorer.toggleFavorite}
           onDrop={explorer.dropOnto}
+          onOpenInNewTab={explorer.newTab}
+          onToggleFavorite={explorer.toggleFavorite}
+          onShowProperties={explorer.showPropertiesForPath}
         />
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -105,7 +120,10 @@ export function FileExplorerView() {
             <EntryTable
               entries={explorer.entries}
               selectedPaths={explorer.selectedPaths}
+              currentPath={explorer.currentPath}
               cutPaths={explorer.cutPaths}
+              revealPath={explorer.revealPath}
+              onRevealed={() => explorer.setRevealPath(null)}
               onOpen={explorer.openEntry}
               onSelect={explorer.selectEntry}
               onContextMenu={explorer.openContextMenuForEntry}
@@ -122,7 +140,10 @@ export function FileExplorerView() {
             <EntryGrid
               entries={explorer.entries}
               selectedPaths={explorer.selectedPaths}
+              currentPath={explorer.currentPath}
               cutPaths={explorer.cutPaths}
+              revealPath={explorer.revealPath}
+              onRevealed={() => explorer.setRevealPath(null)}
               onOpen={explorer.openEntry}
               onSelect={explorer.selectEntry}
               onContextMenu={explorer.openContextMenuForEntry}
@@ -153,6 +174,7 @@ export function FileExplorerView() {
           isCurrentFavorite={explorer.isCurrentFavorite}
           onOpen={explorer.openSelected}
           onOpenWith={explorer.openWithSelected}
+          onOpenInNewTab={explorer.openSelectedInNewTab}
           onRename={explorer.renameSelected}
           onCopy={explorer.copySelected}
           onCut={explorer.cutSelected}
@@ -187,6 +209,8 @@ export function FileExplorerView() {
       <SearchModal />
 
       <IndexStatusBadge />
+
+      <WindowResizeHandles />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
 import { Monitor, Star, X } from "lucide-react";
 import { basename, longestMatchingPath } from "../lib/path";
@@ -7,6 +7,7 @@ import { useSidebarResize } from "../lib/useSidebarResize";
 import { driveIcon, folderIcon } from "../lib/folderIcon";
 import { THIS_PC } from "../file-explorer.types";
 import type { QuickAccessDir } from "../file-explorer.types";
+import { SidebarContextMenu } from "./SidebarContextMenu";
 
 type DropHandler = (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
 
@@ -21,9 +22,29 @@ interface SidebarProps {
   onNavigate: (path: string) => void;
   onUnstar: (path: string) => void;
   onDrop: DropHandler;
+  onOpenInNewTab: (path: string) => void;
+  onToggleFavorite: (path: string) => void;
+  onShowProperties: (path: string) => void;
 }
 
-export function Sidebar({ quickAccess, favorites, drives, currentPath, onNavigate, onUnstar, onDrop }: SidebarProps) {
+interface SidebarMenuState {
+  x: number;
+  y: number;
+  path: string;
+}
+
+export function Sidebar({
+  quickAccess,
+  favorites,
+  drives,
+  currentPath,
+  onNavigate,
+  onUnstar,
+  onDrop,
+  onOpenInNewTab,
+  onToggleFavorite,
+  onShowProperties,
+}: SidebarProps) {
   const activePath = longestMatchingPath(currentPath, [
     ...quickAccess.map((d) => d.path),
     ...favorites,
@@ -31,6 +52,26 @@ export function Sidebar({ quickAccess, favorites, drives, currentPath, onNavigat
   ]);
   const thisPcActive = currentPath === THIS_PC;
   const { width, isResizing, onResizeStart, onResizeMove, onResizeEnd } = useSidebarResize();
+
+  // Local, ephemeral UI state — same shape/lifecycle as SearchModal's own
+  // resultMenu, since a sidebar shortcut isn't part of the ambient
+  // selection/contextMenu machinery EntryTable's rows use.
+  const [contextMenu, setContextMenu] = useState<SidebarMenuState | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [contextMenu]);
+
+  function openContextMenuFor(path: string, x: number, y: number) {
+    setContextMenu({ x, y, path });
+  }
 
   return (
     // The resize handle is a sibling of the scrollable content, not a child
@@ -51,7 +92,14 @@ export function Sidebar({ quickAccess, favorites, drives, currentPath, onNavigat
         </button>
 
         <div className="mt-5">
-          <LinkSection title="Quick Access" links={quickAccess} activePath={activePath} onNavigate={onNavigate} onDrop={onDrop} />
+          <LinkSection
+            title="Quick Access"
+            links={quickAccess}
+            activePath={activePath}
+            onNavigate={onNavigate}
+            onDrop={onDrop}
+            onContextMenu={openContextMenuFor}
+          />
         </div>
 
         <div className="mt-5">
@@ -61,6 +109,7 @@ export function Sidebar({ quickAccess, favorites, drives, currentPath, onNavigat
             activePath={activePath}
             onNavigate={onNavigate}
             onDrop={onDrop}
+            onContextMenu={openContextMenuFor}
             resolveIcon={() => driveIcon}
           />
         </div>
@@ -79,6 +128,7 @@ export function Sidebar({ quickAccess, favorites, drives, currentPath, onNavigat
               onNavigate={onNavigate}
               onUnstar={onUnstar}
               onDrop={onDrop}
+              onContextMenu={openContextMenuFor}
             />
           ))}
         </div>
@@ -95,6 +145,32 @@ export function Sidebar({ quickAccess, favorites, drives, currentPath, onNavigat
           isResizing ? "bg-primary-container" : "hover:bg-primary-container/50"
         }`}
       />
+
+      {contextMenu && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <SidebarContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            isFavorite={favorites.includes(contextMenu.path)}
+            onOpen={() => {
+              onNavigate(contextMenu.path);
+              setContextMenu(null);
+            }}
+            onOpenInNewTab={() => {
+              onOpenInNewTab(contextMenu.path);
+              setContextMenu(null);
+            }}
+            onToggleFavorite={() => {
+              onToggleFavorite(contextMenu.path);
+              setContextMenu(null);
+            }}
+            onProperties={() => {
+              onShowProperties(contextMenu.path);
+              setContextMenu(null);
+            }}
+          />
+        </div>
+      )}
     </aside>
   );
 }
@@ -105,10 +181,11 @@ interface LinkSectionProps {
   activePath: string | null;
   onNavigate: (path: string) => void;
   onDrop: DropHandler;
+  onContextMenu: (path: string, x: number, y: number) => void;
   resolveIcon?: (link: QuickAccessDir) => ComponentType<LucideProps>;
 }
 
-function LinkSection({ title, links, activePath, onNavigate, onDrop, resolveIcon }: LinkSectionProps) {
+function LinkSection({ title, links, activePath, onNavigate, onDrop, onContextMenu, resolveIcon }: LinkSectionProps) {
   if (links.length === 0) return null;
 
   return (
@@ -123,6 +200,7 @@ function LinkSection({ title, links, activePath, onNavigate, onDrop, resolveIcon
           active={link.path === activePath}
           onNavigate={onNavigate}
           onDrop={onDrop}
+          onContextMenu={onContextMenu}
           icon={resolveIcon?.(link)}
         />
       ))}
@@ -135,16 +213,21 @@ interface LinkButtonProps {
   active: boolean;
   onNavigate: (path: string) => void;
   onDrop: DropHandler;
+  onContextMenu: (path: string, x: number, y: number) => void;
   icon?: ComponentType<LucideProps>;
 }
 
-function LinkButton({ link, active, onNavigate, onDrop, icon }: LinkButtonProps) {
+function LinkButton({ link, active, onNavigate, onDrop, onContextMenu, icon }: LinkButtonProps) {
   const dropTarget = useDropTarget(link.path, onDrop);
   const Icon = icon ?? folderIcon(link.name);
 
   return (
     <button
       onClick={() => onNavigate(link.path)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(link.path, e.clientX, e.clientY);
+      }}
       onDragOver={dropTarget.onDragOver}
       onDragLeave={dropTarget.onDragLeave}
       onDrop={dropTarget.onDrop}
@@ -164,14 +247,19 @@ interface FavoriteItemProps {
   onNavigate: (path: string) => void;
   onUnstar: (path: string) => void;
   onDrop: DropHandler;
+  onContextMenu: (path: string, x: number, y: number) => void;
 }
 
-function FavoriteItem({ path, active, onNavigate, onUnstar, onDrop }: FavoriteItemProps) {
+function FavoriteItem({ path, active, onNavigate, onUnstar, onDrop, onContextMenu }: FavoriteItemProps) {
   const dropTarget = useDropTarget(path, onDrop);
   const Icon = folderIcon(basename(path));
 
   return (
     <div
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(path, e.clientX, e.clientY);
+      }}
       onDragOver={dropTarget.onDragOver}
       onDragLeave={dropTarget.onDragLeave}
       onDrop={dropTarget.onDrop}

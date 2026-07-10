@@ -250,11 +250,11 @@ src-tauri/
 - File list
 - Breadcrumbs
 - Address bar
-- Tabs
+- Tabs ✅ (Phase 5 — see the Phase 5 checklist below and `CLAUDE.md`)
 - Split panes
 - Drag and drop
 - Multi-select
-- This PC: virtual sidebar landing (not a real path) showing Quick Access folders and Drives as content tiles. Once indexing exists (Phase 2/3), this is also where system-wide Recent Files (recently modified/opened/created) belongs — see Search History.
+- This PC: virtual sidebar landing (not a real path) showing Quick Access folders and Drives as content tiles, plus a Recent Files list ✅ (see the dedicated Recent Files section below).
 - Sort — click a column header (Name/Date/Size/Type) to sort the current listing, matching native Explorer. Gap identified after Phase 4 shipped: never listed here or in any phase checklist until now.
 - View modes — List (the current `EntryTable` row layout), Medium icons, Large icons, matching native Explorer's view-mode toggle. Same gap as Sort.
 - Group by — collapsible groups within the listing (by Type/Date modified/Size), matching native Explorer's group-by. Same gap as Sort.
@@ -320,7 +320,7 @@ The indexer should run in the background.
 Responsibilities:
 
 - Scan drives ✅ (Phase 2 — one background thread, all detected drives, on startup; the user's home directory is scanned first so useful results show up quickly, and each drive's subdirectories are walked in parallel via rayon)
-- Skip noisy, non-user-data trees ✅ (Phase 2 — node_modules, .git, .cache, Recycle Bin, System Volume Information, package-manager/dependency caches (.cargo, .rustup, .npm, .nuget, .gradle, .m2, .venv/venv, __pycache__, site-packages), and build output (target, dist, build, .next) are pruned by name, not walked at all — confirmed against a real multi-million-file index that these were genuinely large contributors)
+- Skip noisy, non-user-data trees ✅ (Phase 2 — node_modules, .git, .cache, Recycle Bin, System Volume Information, package-manager/dependency/SDK caches (.cargo, .rustup, .npm, .nuget, .gradle, .m2, .venv/venv, __pycache__, site-packages, .bun, .dotnet, .docker, .android, .expo, .ollama), and build output (target, dist, build, .next) are pruned by name, not walked at all; extended post-Phase-4 once the Recent Files feature (below) made AppData/Windows/Program Files/ProgramData noise directly visible — see CLAUDE.md's Indexing section for the full evidence trail, the position-restricted root-dir check Windows/Program Files needed, the .ssh security-motivated exclusion, and the content_index_state reconciliation bug this surfaced and fixed)
 - Detect new files ✅ (notify `Create`/`Modify` events → upsert)
 - Detect deleted files ✅ (notify `Remove` events → delete by path)
 - Detect renamed files ✅ (notify's paired before/after rename event; split rename events fall back to delete-old + create-new)
@@ -461,9 +461,7 @@ Remember:
 
 # Recent Files
 
-Recently modified, opened, and created files, surfaced in the This PC view.
-
-Requires the SQLite index (Phase 2) to query "recently touched anywhere" instantly, instead of a live recursive scan across drives. Until then, a lighter app-tracked version (files opened/created inside Schlag itself, not system-wide) is a reasonable stand-in — see plan for This PC under File Explorer.
+✅ Recently *modified* files, surfaced in the This PC view (`components/RecentFiles.tsx`, `search::recent_files`) — top 10 by `modified_ms` desc, system-wide across the Phase 2 index, queried instantly instead of a live recursive scan. "Opened" and "created" tracking isn't built — the index only ever stores `modified_ms` (see the SQLite section below), not separate open/create timestamps; not a blocker, just a narrower scope than this section originally described. Placed at the *bottom* of This PC (below Folders/Favorites/Drives), not the top — see CLAUDE.md for why an unfiltered "most recent" list needed the `AppData` indexing exclusion (below) before leading with it made sense.
 
 ---
 
@@ -692,11 +690,13 @@ Preview UI is a resizable right-side panel (`PreviewPane.tsx`), mirroring the re
 
 Power Features
 
-- Tabs
+- Tabs ✅ — multiple open folder locations in one window, each with its own current path / back-forward history / selection. Store reorganized so `tabs: Tab[]` + `activeTabId` are the source of truth with the old top-level fields as a live mirror of the active tab (see `CLAUDE.md`), so almost no consumers changed. Includes: new-tab (+) button, click-to-switch, close (×), a tab context menu (Duplicate / Close), "Open in new tab" on folder rows + Sidebar items, drag-to-reorder (live during drag), and drag-a-file-onto-a-background-tab to switch + drop into it. Not persisted across launches (that's Workspace restore, below). Keyboard shortcuts (Ctrl+T / Ctrl+W) deliberately deferred to Phase 6's hotkey system, same as every other shortcut.
+- Custom title bar ✅ — **not originally a planned item**; built alongside Tabs once the tab strip existed to host it. Native OS window chrome removed (`decorations: false`); the tab bar doubles as the title bar with window controls (minimize/maximize/close), a drag region, and JS resize handles. See `CLAUDE.md`'s Window chrome note.
+- Sidebar context menus ✅ — right-click Quick Access / Drives / Favorites for Open / Open in new tab / Add-or-Remove Favorite / Properties. (Previously right-click did nothing on Sidebar items; this replaces that non-behavior now that "Open in new tab" gave it a clear use case.)
 - Split panes
-- Favorites
+- Favorites ✅ (built in Phase 1, not Phase 5 — folder/file starring, `file-explorer.store.ts`'s `favorites: string[]`, persisted, shown in `Sidebar`/`ThisPCView`, toggled via the context menu and `Toolbar`. This bullet was stale until now — never crossed off despite shipping years of checklist-time ago.)
 - Tags
-- Workspace restore
+- Workspace restore (would also make Tabs survive a relaunch — currently they reset to one "This PC" tab on launch)
 - Git integration
 - Duplicate detection
 - Bulk rename

@@ -1,3 +1,4 @@
+import { useEffect, useRef, type DragEvent } from "react";
 import { ChevronDown, ChevronUp, Folder } from "lucide-react";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
 import { formatDate, formatSize } from "../lib/format";
@@ -12,6 +13,9 @@ import type { Entry } from "../file-explorer.types";
 interface EntryTableProps {
   entries: Entry[];
   selectedPaths: string[];
+  // The folder currently being browsed — lets dropping onto empty space
+  // (not a specific row) move/copy into it, same as real Explorer.
+  currentPath: string;
   onOpen: (entry: Entry) => void;
   onSelect: (entry: Entry, mods: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
@@ -24,6 +28,10 @@ interface EntryTableProps {
   // Paths currently on the clipboard as a Cut — dimmed like Explorer's own
   // "in transit" treatment, so it's visually clear the item hasn't moved yet.
   cutPaths?: string[];
+  // A path to scroll into view once rendered (from "Open file location") —
+  // cleared via onRevealed the moment it's handled, so it fires once.
+  revealPath?: string | null;
+  onRevealed?: () => void;
   emptyTitle?: string;
   emptySubtitle?: string;
   sortKey: SortKey;
@@ -76,6 +84,7 @@ function SortableHeader({ column, active, direction, onClick }: SortableHeaderPr
 export function EntryTable({
   entries,
   selectedPaths,
+  currentPath,
   onOpen,
   onSelect,
   onContextMenu,
@@ -84,6 +93,8 @@ export function EntryTable({
   onDrop,
   onBackgroundContextMenu,
   cutPaths = [],
+  revealPath,
+  onRevealed,
   emptyTitle = "Nothing here yet",
   emptySubtitle = "Drag files in, or use New Folder / New File above",
   sortKey,
@@ -91,10 +102,33 @@ export function EntryTable({
   onSortColumnClick,
   groupBy,
 }: EntryTableProps) {
+  // Targets the folder being browsed itself — dropping anywhere that isn't
+  // a specific row (a row's own drop target, see EntryRow, stops
+  // propagation so this doesn't also fire underneath it) moves/copies into
+  // the current folder, same as real Explorer's own background-drop.
+  const backgroundDrop = useDropTarget(currentPath, onDrop);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the reveal target into view once it's in the rendered listing
+  // (from "Open file location"). The matching row carries data-reveal, so
+  // this finds it without escaping backslash-laden Windows paths into a
+  // querySelector. block: "center" puts it comfortably mid-view rather than
+  // flush against the top edge under the sticky header. Cleared immediately
+  // so it never re-fires on an unrelated re-render.
+  useEffect(() => {
+    if (!revealPath) return;
+    scrollRef.current?.querySelector('[data-reveal="true"]')?.scrollIntoView({ block: "center" });
+    onRevealed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealPath, entries]);
+
   if (entries.length === 0) {
     return (
       <div
-        className="themed-scroll flex min-h-0 flex-1 flex-col items-center justify-center gap-1 overflow-y-auto text-center"
+        className={`themed-scroll flex min-h-0 flex-1 flex-col items-center justify-center gap-1 overflow-y-auto text-center transition-colors duration-150 ${
+          backgroundDrop.isOver ? "bg-surface-container-low" : ""
+        }`}
         onClick={(e) => {
           if (e.target === e.currentTarget) onClearSelection();
         }}
@@ -103,6 +137,9 @@ export function EntryTable({
           e.preventDefault();
           onBackgroundContextMenu(e.clientX, e.clientY);
         }}
+        onDragOver={backgroundDrop.onDragOver}
+        onDragLeave={backgroundDrop.onDragLeave}
+        onDrop={backgroundDrop.onDrop}
       >
 
         <Folder size={28} strokeWidth={1.5} className="text-outline" />
@@ -116,7 +153,10 @@ export function EntryTable({
 
   return (
     <div
-      className="themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto"
+      ref={scrollRef}
+      className={`themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto transition-colors duration-150 ${
+        backgroundDrop.isOver ? "bg-surface-container-low" : ""
+      }`}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClearSelection();
       }}
@@ -125,6 +165,9 @@ export function EntryTable({
         e.preventDefault();
         onBackgroundContextMenu(e.clientX, e.clientY);
       }}
+      onDragOver={backgroundDrop.onDragOver}
+      onDragLeave={backgroundDrop.onDragLeave}
+      onDrop={backgroundDrop.onDrop}
     >
       <table className="w-full border-collapse">
         <thead>
@@ -165,6 +208,7 @@ export function EntryTable({
                 entry={item.entry}
                 selected={selectedPaths.includes(item.entry.path)}
                 cut={cutPaths.includes(item.entry.path)}
+                reveal={item.entry.path === revealPath}
                 onOpen={onOpen}
                 onSelect={onSelect}
                 onContextMenu={onContextMenu}
@@ -202,6 +246,7 @@ interface EntryRowProps {
   entry: Entry;
   selected: boolean;
   cut: boolean;
+  reveal: boolean;
   onOpen: (entry: Entry) => void;
   onSelect: (entry: Entry, mods: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
@@ -209,14 +254,28 @@ interface EntryRowProps {
   onDrop: (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
 }
 
-function EntryRow({ entry, selected, cut, onOpen, onSelect, onContextMenu, onDragPaths, onDrop }: EntryRowProps) {
+function EntryRow({ entry, selected, cut, reveal, onOpen, onSelect, onContextMenu, onDragPaths, onDrop }: EntryRowProps) {
   const dropTarget = useDropTarget(entry.path, onDrop);
+  // Stops propagation so a drop that lands on this specific folder row
+  // doesn't also bubble up and re-trigger the table's own background drop
+  // (which targets the currently browsed folder, not this row's folder).
   const dropProps = entry.is_dir
-    ? { onDragOver: dropTarget.onDragOver, onDragLeave: dropTarget.onDragLeave, onDrop: dropTarget.onDrop }
+    ? {
+        onDragOver: (e: DragEvent<HTMLTableRowElement>) => {
+          dropTarget.onDragOver(e);
+          e.stopPropagation();
+        },
+        onDragLeave: dropTarget.onDragLeave,
+        onDrop: (e: DragEvent<HTMLTableRowElement>) => {
+          dropTarget.onDrop(e);
+          e.stopPropagation();
+        },
+      }
     : {};
   return (
     <tr
       draggable
+      data-reveal={reveal ? "true" : undefined}
       onDragStart={(e) => startDrag(e, onDragPaths(entry))}
       onClick={(e) => onSelect(entry, e)}
       onDoubleClick={() => onOpen(entry)}

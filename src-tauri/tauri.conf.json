@@ -15,7 +15,10 @@
         "title": "schlag",
         "width": 800,
         "height": 600,
-        "dragDropEnabled": false
+        "minWidth": 640,
+        "minHeight": 480,
+        "dragDropEnabled": false,
+        "decorations": false
       }
     ],
     "security": {

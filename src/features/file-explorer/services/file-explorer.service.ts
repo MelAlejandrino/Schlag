@@ -30,6 +30,7 @@ export const fileExplorerService = {
     // names by default — keyword_mode on the Rust side must be sent as
     // keywordMode here, unlike SearchFilters' own snake_case fields.
     invoke<Entry[]>("search_files", { query, filters, keywordMode }),
+  recentFiles: () => invoke<Entry[]>("recent_files"),
   searchContent: (query: string, folder: string | undefined, keywordMode: boolean) =>
     invoke<ContentSearchResult[]>("search_content", { query, folder, keywordMode }),
   previewText: (path: string) => invoke<string | null>("preview_text", { path }),

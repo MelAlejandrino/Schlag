@@ -49,7 +49,13 @@ const EXCLUDED_DIR_NAMES: &[&str] = &[
     ".cache",
     "$recycle.bin",
     "system volume information",
-    // Package-manager / dependency caches.
+    // Package-manager / dependency / SDK caches — confirmed live via a real
+    // filename-search query for "cookies" that surfaced `.bun`/`.dotnet`
+    // package-cache hits alongside legitimate project files (see CLAUDE.md);
+    // same category as the rest of this group, added on the same evidence
+    // bar. Content lives here, never gets user-searched by name: same
+    // reasoning already applied to `.venv`/`.cargo` below regardless of
+    // where they're nested, not just at $HOME.
     ".cargo",
     ".rustup",
     ".npm",
@@ -60,17 +66,80 @@ const EXCLUDED_DIR_NAMES: &[&str] = &[
     "venv",
     "__pycache__",
     "site-packages",
+    ".bun",
+    ".dotnet",
+    ".docker",
+    ".android",
+    ".expo",
+    ".ollama",
     // Build output.
     "target",
     "dist",
     "build",
     ".next",
-    // This app's own data directory (index.db + WAL). Without this, every
-    // write to our own index generates a filesystem event that the
-    // recursive watcher picks up and re-indexes as if it were a normal
-    // file — a self-referential loop that adds constant, pointless churn
-    // to the very watcher we depend on not to drop real events under load.
-    "com.carlo.schlag",
+    // Never index credentials. This isn't a noise/relevance judgment like
+    // the rest of this list — a file explorer that surfaces SSH private
+    // keys, `known_hosts`, or `authorized_keys` filenames (and, if any ever
+    // matched an extractable extension, content) in a general-purpose
+    // Recent Files or search UI is a real exposure, independent of whether
+    // those files are ever actually modified often enough to be "noisy".
+    ".ssh",
+    // The entire per-user application-data tree — Roaming, Local, and
+    // LocalLow all live directly under a folder literally named "AppData",
+    // so this one entry prunes all three at once. Browser profiles (Chrome's
+    // `Cookies`/`Cookies-journal`/network-state journal files), npm/yarn/pip
+    // caches under the user profile, %TEMP%, and every other app's private
+    // scratch data all live here — none of it is ever something a user
+    // searches for by name. Confirmed live: this exact junk (Cookies files,
+    // npm debug logs, stray %TEMP% files) was dominating the Recent Files
+    // list before this was added. This also covers this app's own data
+    // directory (`index.db` + WAL, under `%APPDATA%\com.carlo.schlag`) for
+    // free — without excluding that specifically, every write to our own
+    // index would generate a filesystem event the recursive watcher picks
+    // up and re-indexes as if it were a normal file, a self-referential loop.
+    "appdata",
+    // A handful of individual, singleton *files* (not directories) that live
+    // at a drive's root and are among the most frequently-rewritten files on
+    // the entire system — Windows' own virtual-memory backing files, touched
+    // continuously under normal use, confirmed live sitting at the very top
+    // of a real Recent Files list ahead of anything a user actually did.
+    // `is_excluded()` already runs against every entry (file or directory)
+    // scan_drive's root-level loop and walk_subtree's filter_entry see, so
+    // these fit the same name-match list rather than needing a parallel one.
+    "hiberfil.sys",
+    "pagefile.sys",
+    "swapfile.sys",
+    "dumpstack.log.tmp",
+];
+
+// Whole OS/application-install trees — `C:\Windows`, `C:\Program Files`, etc.
+// — matched **only when the name is a drive's own top-level folder**, unlike
+// EXCLUDED_DIR_NAMES above (which matches at any depth). "Windows" or
+// "Program Files" are real, if uncommon, names a user could legitimately
+// give their *own* nested folder (a cross-platform project's own `windows/`
+// build folder, say) — matching those by name at arbitrary depth the way
+// `node_modules`/`AppData` safely can would risk pruning real user content.
+// Restricting the match to "is this the first path component under a drive
+// letter" avoids that risk entirely while still catching the exact trees
+// this exists for: confirmed live, `C:\Windows` alone (System32, winevt
+// event logs, catroot2, scheduled Tasks) was dominating Recent Files with
+// pure OS noise once AppData's own noise was cut.
+// ponytail: hardcoded, not a setting — same rationale as EXCLUDED_DIR_NAMES.
+const EXCLUDED_ROOT_DIR_NAMES: &[&str] = &[
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "recovery",
+    "perflogs",
+    // Windows Update's own staging/history folder.
+    "$getcurrent",
+    // Legacy compatibility symlink to `Users` present on virtually every
+    // real Windows install since Vista — walking it would either duplicate
+    // the entire user tree under a second path or (if `walkdir` doesn't
+    // follow the symlink, its default) index one harmless-but-pointless
+    // junction entry; excluding it outright avoids relying on that default.
+    "documents and settings",
 ];
 
 fn is_excluded(name: &OsStr) -> bool {
@@ -78,13 +147,33 @@ fn is_excluded(name: &OsStr) -> bool {
     EXCLUDED_DIR_NAMES.iter().any(|excluded| name.eq_ignore_ascii_case(excluded))
 }
 
+// True only for a path whose first component after the drive letter (e.g.
+// `Windows` in `C:\Windows\System32\...`) matches EXCLUDED_ROOT_DIR_NAMES —
+// deliberately not a "matches anywhere in the path" check like is_excluded(),
+// see that constant's own comment for why.
+fn is_excluded_root_dir(path: &Path) -> bool {
+    let mut components = path.components();
+    components.next(); // Prefix, e.g. `C:`
+    components.next(); // RootDir, `\`
+    match components.next() {
+        Some(std::path::Component::Normal(name)) => {
+            let name = name.to_string_lossy();
+            EXCLUDED_ROOT_DIR_NAMES.iter().any(|excluded| name.eq_ignore_ascii_case(excluded))
+        }
+        _ => false,
+    }
+}
+
 // The initial walk prunes excluded directories by name so it never descends
 // into them at all. The live notify watcher has no such pruning (it watches
 // whole drives recursively), so it needs this instead: check every component
 // of an event's path, since the event can be a file several levels inside an
 // excluded directory (e.g. a dev server writing into node_modules/.vite).
+// Also covers the root-only exclusions above — a live write anywhere under
+// `C:\Windows` must be recognized as excluded here too, not just pruned from
+// the initial directory walk.
 fn path_is_excluded(path: &Path) -> bool {
-    path.components().any(|c| is_excluded(c.as_os_str()))
+    path.components().any(|c| is_excluded(c.as_os_str())) || is_excluded_root_dir(path)
 }
 
 pub struct IndexStatus {
@@ -191,6 +280,7 @@ pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, conten
         std::thread::spawn(move || run_content_indexer(content_conn, content_index, content_schema, content_rx, content_status));
 
         prune_stale_entries(&conn, &content_tx);
+        prune_stale_content_state(&conn, &content_tx);
 
         let drain_content_tx = content_tx.clone();
         std::thread::spawn(move || drain_events(&drain_conn, rx, &drain_content_tx));
@@ -245,7 +335,7 @@ fn scan_drive(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, conte
     match fs::read_dir(root) {
         Ok(entries) => {
             for entry in entries.filter_map(Result::ok) {
-                if is_excluded(&entry.file_name()) {
+                if is_excluded(&entry.file_name()) || is_excluded_root_dir(&entry.path()) {
                     continue;
                 }
                 match entry.metadata() {
@@ -295,6 +385,13 @@ fn walk_subtree(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, con
 // parallelized via rayon since it's I/O-bound, same reasoning as the scan
 // itself. Not something to run continuously (millions of stat calls isn't
 // free at that scale), just once per session to catch up.
+//
+// Also prunes any row that's still present on disk but now falls under an
+// exclusion rule (e.g. AppData) — otherwise a user upgrading from before
+// that rule existed would keep seeing already-indexed junk forever, since
+// the scan only ever adds/updates rows and never deletes ones that still
+// exist. path_is_excluded() is a cheap string check with no I/O, so it's
+// checked first and short-circuits the stat call entirely for those rows.
 fn prune_stale_entries(conn: &Mutex<Connection>, content_tx: &Sender<ContentEvent>) {
     let paths: Vec<String> = {
         let conn = conn.lock().unwrap();
@@ -310,18 +407,64 @@ fn prune_stale_entries(conn: &Mutex<Connection>, content_tx: &Sender<ContentEven
         }
     };
 
-    let stale: Vec<String> = paths.into_par_iter().filter(|p| !Path::new(p).exists()).collect();
+    let stale: Vec<String> = paths
+        .into_par_iter()
+        .filter(|p| path_is_excluded(Path::new(p)) || !Path::new(p).exists())
+        .collect();
     if stale.is_empty() {
         return;
     }
-    let conn = conn.lock().unwrap();
-    for path in &stale {
-        if let Err(e) = database::delete_by_path(&conn, path) {
-            tracing::warn!("failed to prune stale entry {path}: {e}");
+    {
+        let mut conn = conn.lock().unwrap();
+        if let Err(e) = database::delete_batch(&mut conn, &stale) {
+            tracing::error!("failed to batch-prune {} stale/excluded entries: {e}", stale.len());
         }
+    }
+    for path in &stale {
         queue_content_removal(content_tx, Path::new(path));
     }
-    tracing::info!("pruned {} stale index entries no longer present on disk", stale.len());
+    tracing::info!("pruned {} stale or now-excluded index entries", stale.len());
+}
+
+// content_index_state (the Tantivy content-index's own bookkeeping table)
+// can drift out of sync with `files` independently — it's not enough for
+// prune_stale_entries above to derive removals from `files`'s own stale
+// list, because content_index_state can outlive the `files` row it was
+// derived from. Confirmed live: an earlier prune_stale_entries run queued
+// ContentEvent::Remove for ~500k newly-excluded AppData paths over the
+// content-indexer thread's in-memory channel, but this app restarted
+// (Tauri's dev-mode file watcher rebuilding on a source change) before that
+// backlog fully drained — those in-memory removal requests are gone once
+// the process exits, and since prune_stale_entries only ever looks at
+// what's *currently* in `files` (already empty for those same paths by
+// then), it never re-queues them. Left over 50,000 content_index_state rows
+// (and their Tantivy documents) permanently orphaned under AppData, with
+// the content-indexer thread completely idle — not a slow drain, a real
+// gap. This reconciles content_index_state directly against its own paths
+// instead of relying on that one-shot side channel ever having succeeded.
+fn prune_stale_content_state(conn: &Mutex<Connection>, content_tx: &Sender<ContentEvent>) {
+    let paths: Vec<String> = {
+        let conn = conn.lock().unwrap();
+        match database::content_index_state_paths(&conn) {
+            Ok(paths) => paths,
+            Err(e) => {
+                tracing::error!("failed to read paths for content-state prune: {e}");
+                return;
+            }
+        }
+    };
+
+    let stale: Vec<String> = paths
+        .into_par_iter()
+        .filter(|p| path_is_excluded(Path::new(p)) || !Path::new(p).exists())
+        .collect();
+    if stale.is_empty() {
+        return;
+    }
+    for path in &stale {
+        let _ = content_tx.send(ContentEvent::Remove(PathBuf::from(path)));
+    }
+    tracing::info!("queued removal of {} stale/excluded content-index entries", stale.len());
 }
 
 fn flush_batch(conn: &mut Connection, batch: &mut Vec<database::FileRow>, status: &IndexStatus) {
@@ -483,15 +626,21 @@ fn run_content_indexer(
     const COMMIT_INTERVAL: Duration = Duration::from_secs(5);
     let mut since_commit = 0usize;
     let mut last_commit = std::time::Instant::now();
+    // Pending content_index_state deletes, flushed in one transaction at the
+    // same points writer.commit() already fires below — a bare per-event
+    // delete_content_indexed_mtime call (each its own implicit transaction)
+    // is an order of magnitude slower once a real removal backlog needs
+    // processing at once (confirmed live: prune_stale_content_state can
+    // queue tens of thousands of these in one shot after an exclusion-rule
+    // change), same class of fix already applied to database::delete_batch.
+    let mut pending_removals: Vec<String> = Vec::new();
 
     for event in rx {
         match event {
             ContentEvent::Remove(path) => {
                 let path_str = path.to_string_lossy().into_owned();
                 content_index::remove_path(&writer, &schema, &path_str);
-                if let Ok(conn) = conn.lock() {
-                    let _ = database::delete_content_indexed_mtime(&conn, &path_str);
-                }
+                pending_removals.push(path_str);
                 since_commit += 1;
             }
             ContentEvent::Index(path, modified_ms) => {
@@ -546,9 +695,23 @@ fn run_content_indexer(
             }
             since_commit = 0;
             last_commit = std::time::Instant::now();
+            flush_pending_removals(&conn, &mut pending_removals);
         }
     }
     let _ = writer.commit();
+    flush_pending_removals(&conn, &mut pending_removals);
+}
+
+fn flush_pending_removals(conn: &Mutex<Connection>, pending: &mut Vec<String>) {
+    if pending.is_empty() {
+        return;
+    }
+    if let Ok(mut conn) = conn.lock() {
+        if let Err(e) = database::delete_content_indexed_mtime_batch(&mut conn, pending) {
+            tracing::error!("failed to batch-delete {} content-index-state rows: {e}", pending.len());
+        }
+    }
+    pending.clear();
 }
 
 #[cfg(test)]
@@ -564,9 +727,21 @@ mod tests {
         std::sync::mpsc::channel().0
     }
 
+    // Fixtures must live somewhere no component of EXCLUDED_DIR_NAMES
+    // matches: on Windows, the standard temp-dir API resolves under
+    // %LOCALAPPDATA%\Temp, which the "appdata" entry now (correctly) prunes
+    // — and naively nesting this under the crate's own target/ directory
+    // instead trips the *"target"* entry (Rust's own build-output exclusion)
+    // just as fast. Either would get silently pruned by the very code under
+    // test. "test-scratch" is a sibling of target/, not a child of it —
+    // git-ignored below, same as target/ itself.
+    fn test_scratch_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("test-scratch")
+    }
+
     #[test]
     fn prune_stale_entries_removes_rows_for_missing_files_only() {
-        let base = std::env::temp_dir().join("schlag_test_indexer_prune");
+        let base = test_scratch_dir().join("schlag_test_indexer_prune");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let kept = base.join("still_here.txt");
@@ -574,7 +749,7 @@ mod tests {
         let gone = base.join("already_deleted.txt");
         fs::write(&gone, b"bye").unwrap();
 
-        let db_path = std::env::temp_dir().join("schlag_test_indexer_prune.sqlite");
+        let db_path = test_scratch_dir().join("schlag_test_indexer_prune.sqlite");
         let _ = fs::remove_file(&db_path);
         let mut conn = database::open(&db_path).unwrap();
         database::upsert_batch(
@@ -607,13 +782,13 @@ mod tests {
     // without spawning it or touching notify — deterministic and fast.
     #[test]
     fn scan_drive_indexes_nested_files_and_directories() {
-        let base = std::env::temp_dir().join("schlag_test_indexer_scan");
+        let base = test_scratch_dir().join("schlag_test_indexer_scan");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("nested")).unwrap();
         fs::write(base.join("root.txt"), b"hello").unwrap();
         fs::write(base.join("nested").join("deep.txt"), b"world").unwrap();
 
-        let db_path = std::env::temp_dir().join("schlag_test_indexer_scan.sqlite");
+        let db_path = test_scratch_dir().join("schlag_test_indexer_scan.sqlite");
         let _ = fs::remove_file(&db_path);
         let conn = Mutex::new(database::open(&db_path).unwrap());
         let status = IndexStatus::new();
@@ -637,13 +812,13 @@ mod tests {
 
     #[test]
     fn scan_drive_skips_excluded_directories() {
-        let base = std::env::temp_dir().join("schlag_test_indexer_excluded");
+        let base = test_scratch_dir().join("schlag_test_indexer_excluded");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("node_modules").join("some-pkg")).unwrap();
         fs::write(base.join("node_modules").join("some-pkg").join("index.js"), b"noise").unwrap();
         fs::write(base.join("keep.txt"), b"kept").unwrap();
 
-        let db_path = std::env::temp_dir().join("schlag_test_indexer_excluded.sqlite");
+        let db_path = test_scratch_dir().join("schlag_test_indexer_excluded.sqlite");
         let _ = fs::remove_file(&db_path);
         let conn = Mutex::new(database::open(&db_path).unwrap());
         let status = IndexStatus::new();
@@ -662,14 +837,200 @@ mod tests {
     }
 
     #[test]
+    fn scan_drive_skips_ssh_and_extra_tool_caches() {
+        let base = test_scratch_dir().join("schlag_test_indexer_ssh_and_caches");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join(".ssh")).unwrap();
+        fs::write(base.join(".ssh").join("id_ed25519"), b"fake private key").unwrap();
+        fs::create_dir_all(base.join(".bun").join("install")).unwrap();
+        fs::write(base.join(".bun").join("install").join("cache.json"), b"noise").unwrap();
+        fs::write(base.join("keep.txt"), b"kept").unwrap();
+
+        let db_path = test_scratch_dir().join("schlag_test_indexer_ssh_and_caches.sqlite");
+        let _ = fs::remove_file(&db_path);
+        let conn = Mutex::new(database::open(&db_path).unwrap());
+        let status = IndexStatus::new();
+
+        scan_drive(&conn, &base, &status, &test_content_tx());
+        let conn = conn.into_inner().unwrap();
+
+        // base itself + keep.txt only — .ssh/ and .bun/ are pruned entirely.
+        assert_eq!(database::count(&conn).unwrap(), 2);
+        let keep_path = base.join("keep.txt").to_string_lossy().into_owned();
+        conn.query_row("SELECT path FROM files WHERE path = ?1", [&keep_path], |row| row.get::<_, String>(0))
+            .expect("keep.txt should be indexed");
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn is_excluded_root_dir_matches_only_the_drives_own_top_level_folder() {
+        assert!(is_excluded_root_dir(Path::new(r"C:\Windows")));
+        assert!(is_excluded_root_dir(Path::new(r"C:\Windows\System32\drivers\etc\hosts")));
+        assert!(is_excluded_root_dir(Path::new(r"D:\Program Files\Vendor\app.exe")));
+        assert!(is_excluded_root_dir(Path::new(r"C:\ProgramData\Bitdefender\cache.db")));
+
+        // A user's own nested folder that happens to share a name with an
+        // excluded root dir must not be excluded — only the drive's own
+        // top-level folder should match, which is the whole reason this is
+        // a separate, position-restricted check rather than reusing
+        // is_excluded()'s anywhere-in-the-path matching.
+        assert!(!is_excluded_root_dir(Path::new(r"C:\Users\carlo\Documents\myproject\windows\build.rs")));
+    }
+
+    #[test]
+    fn path_is_excluded_covers_both_anywhere_names_and_root_only_names() {
+        assert!(path_is_excluded(Path::new(r"C:\Users\carlo\AppData\Local\Temp\a.txt")));
+        assert!(path_is_excluded(Path::new(r"C:\Windows\System32\foo.dll")));
+        assert!(!path_is_excluded(Path::new(r"C:\Users\carlo\Documents\report.txt")));
+    }
+
+    #[test]
+    fn scan_drive_skips_noisy_root_level_system_files() {
+        let base = test_scratch_dir().join("schlag_test_indexer_sysfiles");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join("pagefile.sys"), b"fake").unwrap();
+        fs::write(base.join("keep.txt"), b"kept").unwrap();
+
+        let db_path = test_scratch_dir().join("schlag_test_indexer_sysfiles.sqlite");
+        let _ = fs::remove_file(&db_path);
+        let conn = Mutex::new(database::open(&db_path).unwrap());
+        let status = IndexStatus::new();
+
+        scan_drive(&conn, &base, &status, &test_content_tx());
+        let conn = conn.into_inner().unwrap();
+
+        // base itself + keep.txt only.
+        assert_eq!(database::count(&conn).unwrap(), 2);
+        let keep_path = base.join("keep.txt").to_string_lossy().into_owned();
+        conn.query_row("SELECT path FROM files WHERE path = ?1", [&keep_path], |row| row.get::<_, String>(0))
+            .expect("keep.txt should be indexed");
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn scan_drive_skips_appdata_case_insensitively() {
+        let base = test_scratch_dir().join("schlag_test_indexer_appdata");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("AppData").join("Local").join("Google").join("Chrome").join("User Data")).unwrap();
+        fs::write(base.join("AppData").join("Local").join("Google").join("Chrome").join("User Data").join("Cookies"), b"noise").unwrap();
+        fs::write(base.join("keep.txt"), b"kept").unwrap();
+
+        let db_path = test_scratch_dir().join("schlag_test_indexer_appdata.sqlite");
+        let _ = fs::remove_file(&db_path);
+        let conn = Mutex::new(database::open(&db_path).unwrap());
+        let status = IndexStatus::new();
+
+        scan_drive(&conn, &base, &status, &test_content_tx());
+        let conn = conn.into_inner().unwrap();
+
+        // base itself + keep.txt only — the whole AppData subtree is pruned entirely.
+        assert_eq!(database::count(&conn).unwrap(), 2);
+        let keep_path = base.join("keep.txt").to_string_lossy().into_owned();
+        conn.query_row("SELECT path FROM files WHERE path = ?1", [&keep_path], |row| row.get::<_, String>(0))
+            .expect("keep.txt should be indexed");
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn prune_stale_entries_also_removes_existing_files_under_a_newly_excluded_directory() {
+        let base = test_scratch_dir().join("schlag_test_indexer_prune_excluded");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("AppData").join("Local")).unwrap();
+        let excluded_but_present = base.join("AppData").join("Local").join("Cookies");
+        fs::write(&excluded_but_present, b"still on disk").unwrap();
+        let kept = base.join("still_here.txt");
+        fs::write(&kept, b"hi").unwrap();
+
+        let db_path = test_scratch_dir().join("schlag_test_indexer_prune_excluded.sqlite");
+        let _ = fs::remove_file(&db_path);
+        let mut conn = database::open(&db_path).unwrap();
+        // Simulate rows indexed by an older build, before AppData was excluded.
+        database::upsert_batch(
+            &mut conn,
+            &[
+                make_row(&kept, &fs::metadata(&kept).unwrap()),
+                make_row(&excluded_but_present, &fs::metadata(&excluded_but_present).unwrap()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(database::count(&conn).unwrap(), 2);
+
+        let conn = Mutex::new(conn);
+        prune_stale_entries(&conn, &test_content_tx());
+        let conn = conn.into_inner().unwrap();
+
+        // The AppData row is gone even though the file genuinely still exists on disk.
+        assert_eq!(database::count(&conn).unwrap(), 1);
+        let remaining: String = conn.query_row("SELECT path FROM files", [], |r| r.get(0)).unwrap();
+        assert_eq!(remaining, kept.to_string_lossy());
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_file(&db_path);
+    }
+
+    // Reproduces the exact gap found live: a content_index_state row can
+    // outlive the `files` row it was derived from (the in-memory
+    // ContentEvent::Remove queued for it never got processed before an app
+    // restart), so this must reconcile content_index_state's own paths
+    // directly — not rely on `files` still having a matching row to key off.
+    #[test]
+    fn prune_stale_content_state_queues_removal_for_excluded_and_missing_paths_only() {
+        let base = test_scratch_dir().join("schlag_test_indexer_prune_content_state");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("AppData").join("Local")).unwrap();
+        let excluded_but_present = base.join("AppData").join("Local").join("notes.md");
+        fs::write(&excluded_but_present, b"still on disk").unwrap();
+        let missing = base.join("deleted.md");
+        let kept = base.join("kept.md");
+        fs::write(&kept, b"hi").unwrap();
+
+        let db_path = test_scratch_dir().join("schlag_test_indexer_prune_content_state.sqlite");
+        let _ = fs::remove_file(&db_path);
+        let conn = database::open(&db_path).unwrap();
+        // These paths intentionally have NO corresponding row in `files` —
+        // reproducing the exact scenario where `files` was already pruned
+        // in an earlier, interrupted pass.
+        database::set_content_indexed_mtime(&conn, &excluded_but_present.to_string_lossy(), 1_700_000_000_000).unwrap();
+        database::set_content_indexed_mtime(&conn, &missing.to_string_lossy(), 1_700_000_000_000).unwrap();
+        database::set_content_indexed_mtime(&conn, &kept.to_string_lossy(), 1_700_000_000_000).unwrap();
+
+        let conn = Mutex::new(conn);
+        let (tx, rx) = std::sync::mpsc::channel::<ContentEvent>();
+        prune_stale_content_state(&conn, &tx);
+        drop(tx);
+
+        let mut removed: Vec<String> = rx
+            .iter()
+            .map(|e| match e {
+                ContentEvent::Remove(p) => p.to_string_lossy().into_owned(),
+                ContentEvent::Index(..) => panic!("prune_stale_content_state should only ever send Remove events"),
+            })
+            .collect();
+        removed.sort();
+        let mut expected = vec![excluded_but_present.to_string_lossy().into_owned(), missing.to_string_lossy().into_owned()];
+        expected.sort();
+        assert_eq!(removed, expected, "only the excluded-but-present and missing paths should be queued for removal, not the kept one");
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn apply_event_handles_create_and_remove() {
-        let base = std::env::temp_dir().join("schlag_test_indexer_events");
+        let base = test_scratch_dir().join("schlag_test_indexer_events");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let file = base.join("a.txt");
         fs::write(&file, b"hi").unwrap();
 
-        let db_path = std::env::temp_dir().join("schlag_test_indexer_events.sqlite");
+        let db_path = test_scratch_dir().join("schlag_test_indexer_events.sqlite");
         let _ = fs::remove_file(&db_path);
         let conn = database::open(&db_path).unwrap();
 
@@ -699,14 +1060,14 @@ mod tests {
     // though the new path is excluded.
     #[test]
     fn apply_event_removes_old_path_when_moved_into_excluded_destination() {
-        let base = std::env::temp_dir().join("schlag_test_indexer_recycle");
+        let base = test_scratch_dir().join("schlag_test_indexer_recycle");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let file = base.join("doomed.txt");
         fs::write(&file, b"hi").unwrap();
         let recycled = std::path::Path::new(r"C:\$RECYCLE.BIN\S-1-5-21-doomed.txt").to_path_buf();
 
-        let db_path = std::env::temp_dir().join("schlag_test_indexer_recycle.sqlite");
+        let db_path = test_scratch_dir().join("schlag_test_indexer_recycle.sqlite");
         let _ = fs::remove_file(&db_path);
         let conn = database::open(&db_path).unwrap();
 
@@ -734,13 +1095,13 @@ mod tests {
 
     #[test]
     fn apply_event_create_is_immediately_searchable() {
-        let base = std::env::temp_dir().join("schlag_test_indexer_search_sync");
+        let base = test_scratch_dir().join("schlag_test_indexer_search_sync");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let file = base.join("brand_new_report.txt");
         fs::write(&file, b"hi").unwrap();
 
-        let db_path = std::env::temp_dir().join("schlag_test_indexer_search_sync.sqlite");
+        let db_path = test_scratch_dir().join("schlag_test_indexer_search_sync.sqlite");
         let _ = fs::remove_file(&db_path);
         let conn = database::open(&db_path).unwrap();
 
@@ -761,13 +1122,13 @@ mod tests {
 
     #[test]
     fn apply_event_ignores_paths_under_excluded_directories() {
-        let base = std::env::temp_dir().join("schlag_test_indexer_excluded_events");
+        let base = test_scratch_dir().join("schlag_test_indexer_excluded_events");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("node_modules").join(".vite")).unwrap();
         let file = base.join("node_modules").join(".vite").join("chunk.js");
         fs::write(&file, b"noise").unwrap();
 
-        let db_path = std::env::temp_dir().join("schlag_test_indexer_excluded_events.sqlite");
+        let db_path = test_scratch_dir().join("schlag_test_indexer_excluded_events.sqlite");
         let _ = fs::remove_file(&db_path);
         let conn = database::open(&db_path).unwrap();
 

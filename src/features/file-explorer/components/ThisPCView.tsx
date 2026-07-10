@@ -4,6 +4,7 @@ import { useDropTarget } from "../lib/useDropTarget";
 import { driveIcon, folderIcon } from "../lib/folderIcon";
 import { toNamedPaths } from "../lib/path";
 import type { QuickAccessDir } from "../file-explorer.types";
+import { RecentFiles } from "./RecentFiles";
 
 interface ThisPCViewProps {
   quickAccess: QuickAccessDir[];
@@ -28,6 +29,7 @@ export function ThisPCView({ quickAccess, favorites, drives, onNavigate, onDrop 
         className="mt-7"
       />
       <TileSection title="Drives" resolveIcon={() => driveIcon} items={drives} onNavigate={onNavigate} onDrop={onDrop} className="mt-7" />
+      <RecentFiles className="mt-7" />
     </div>
   );
 }

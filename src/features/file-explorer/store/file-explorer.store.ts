@@ -5,6 +5,7 @@ import { dirname } from "../lib/path";
 import type { PromptKind } from "../lib/promptConfig";
 import { sortEntries, type SortDirection, type SortKey } from "../lib/sortEntries";
 import { compareGroupKeys, groupKeyFor, type GroupBy } from "../lib/groupEntries";
+import { createTab, nextActiveTabId, reorderTabs, type Tab } from "../lib/tabs";
 import {
   THIS_PC,
   type ClipboardOp,
@@ -47,9 +48,23 @@ function organizeEntries(
 }
 
 interface FileExplorerState {
+  // Hoisted fields of whichever tab is active. Every existing consumer
+  // (Toolbar, AddressBar, EntryTable, useSearch.ts's direct store selectors,
+  // canGoBack/canGoForward in useFileExplorer.ts, etc.) keeps reading these
+  // exactly as before — they still mean "the current tab's X," now backed
+  // by `tabs`/`activeTabId` underneath instead of being the only copy. Kept
+  // in sync with the matching `tabs[]` entry by applyTabPatch, below.
   currentPath: string;
   addressInput: string;
   entries: Entry[];
+  history: string[];
+  historyIndex: number;
+  selectedPaths: string[];
+  selectionAnchor: string | null;
+
+  tabs: Tab[];
+  activeTabId: string;
+
   quickAccess: QuickAccessDir[];
   drives: QuickAccessDir[];
   favorites: string[];
@@ -62,7 +77,10 @@ interface FileExplorerState {
   previewWidth: number;
   // A single global preference, not per-folder memory like real Explorer —
   // a stated v1 scope limit, not an oversight. Persisted the same
-  // lasting-preference way as sidebarWidth/previewOpen.
+  // lasting-preference way as sidebarWidth/previewOpen. Stays global across
+  // tabs too, same reasoning — see setSortKey etc. below for how a change
+  // still reaches every open tab's already-loaded entries, not just the
+  // active one.
   sortKey: SortKey;
   sortDirection: SortDirection;
   groupBy: GroupBy;
@@ -71,8 +89,6 @@ interface FileExplorerState {
   // in within a group; conflating them was reported as surprising.
   groupOrder: SortDirection;
   viewMode: ViewMode;
-  history: string[];
-  historyIndex: number;
   error: string | null;
   contextMenu: ContextMenuState | null;
   activePrompt: PromptKind | null;
@@ -84,16 +100,28 @@ interface FileExplorerState {
   clipboard: ClipboardState | null;
   deleteConfirmOpen: boolean;
   deleteTarget: Entry[] | null;
-  selectedPaths: string[];
-  selectionAnchor: string | null;
+  // A one-shot "scroll this path into view once the listing renders" signal,
+  // set by openFileLocation (a search result's folder can have thousands of
+  // entries, and selecting the target isn't enough — it's off-screen). The
+  // listing (EntryTable/EntryGrid) consumes it and immediately clears it via
+  // setRevealPath(null), so it fires exactly once and never re-scrolls on an
+  // unrelated re-render. Transient, not part of Tab — only ever meaningful
+  // for the active tab right after its own navigation.
+  revealPath: string | null;
   initialized: boolean;
 
   init: () => Promise<void>;
   navigate: (path: string) => Promise<void>;
   refresh: () => Promise<void>;
+  refreshTabsShowing: (paths: string[]) => Promise<void>;
   goBack: () => void;
   goForward: () => void;
   goUp: () => void;
+  newTab: (path?: string) => void;
+  closeTab: (id: string) => void;
+  switchTab: (id: string) => void;
+  reorderTabs: (draggedId: string, targetId: string, insertAfter: boolean) => void;
+  setRevealPath: (path: string | null) => void;
   setAddressInput: (value: string) => void;
   setSidebarWidth: (width: number) => void;
   togglePreview: () => void;
@@ -123,213 +151,382 @@ interface FileExplorerState {
 
 export const useFileExplorerStore = create<FileExplorerState>()(
   persist(
-    (set, get) => ({
-      currentPath: "",
-      addressInput: "",
-      entries: [],
-      quickAccess: [],
-      drives: [],
-      favorites: [],
-      sidebarWidth: 240,
-      previewOpen: false,
-      previewWidth: 320,
-      sortKey: "name",
-      sortDirection: "asc",
-      groupBy: "none",
-      groupOrder: "asc",
-      viewMode: "list",
-      history: [],
-      historyIndex: -1,
-      error: null,
-      contextMenu: null,
-      activePrompt: null,
-      promptTarget: null,
-      clipboard: null,
-      deleteConfirmOpen: false,
-      deleteTarget: null,
-      selectedPaths: [],
-      selectionAnchor: null,
-      initialized: false,
+    (set, get) => {
+      // Writes a Tab-shaped patch into tabs[]'s entry for `tabId`, always —
+      // and additionally mirrors it into the top-level fields, but ONLY if
+      // `tabId` is still the active tab by the time this runs. The guard
+      // matters because navigate/refresh/goBack/goForward all have an async
+      // gap between starting a load and applying its result — without it,
+      // switching tabs mid-flight would let a slow background-tab load
+      // clobber whatever tab the user is actually looking at once it
+      // resolves.
+      function applyTabPatch(tabId: string, patch: Partial<Tab>) {
+        const { tabs, activeTabId } = get();
+        const nextTabs = tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t));
+        set(tabId === activeTabId ? { ...patch, tabs: nextTabs } : { tabs: nextTabs });
+      }
 
-      // useFileExplorer() (the business-logic hook) is now called from both
-      // FileExplorerView and SearchModal — both mount at startup, so this
-      // must be idempotent, not just "only called once by convention." The
-      // flag is set synchronously, before the first await, so a second call
-      // arriving before the first one's async work resolves still sees it
-      // and bails immediately, rather than double-fetching quickAccess/
-      // drives and double-navigating to THIS_PC.
-      init: async () => {
-        if (get().initialized) return;
-        set({ initialized: true });
-        try {
-          const [quickAccess, drives] = await Promise.all([
-            fileExplorerService.quickAccessDirs(),
-            fileExplorerService.listDrives(),
-          ]);
-          set({ quickAccess, drives });
-          await get().navigate(THIS_PC);
-        } catch (e) {
-          set({ error: String(e) });
-        }
-      },
+      function getTab(tabId: string): Tab | undefined {
+        return get().tabs.find((t) => t.id === tabId);
+      }
 
-      navigate: async (path: string) => {
-        try {
-          const raw = await loadEntries(path);
-          const { history, historyIndex, sortKey, sortDirection, groupBy, groupOrder } = get();
-          const entries = organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder);
-          const nextHistory = [...history.slice(0, historyIndex + 1), path];
+      // sortKey/sortDirection/groupBy/groupOrder are global, but re-sorting
+      // only the active tab's `entries` would leave every background tab
+      // showing stale order until its next navigate/refresh — a real,
+      // visible inconsistency the moment you switch to it. Re-organizing
+      // every tab's already-loaded entries here (cheap: an in-memory array
+      // sort, no I/O, regardless of how many tabs are open) keeps all of
+      // them consistent with the new preference immediately.
+      function reorganizeAllTabs(sortKey: SortKey, sortDirection: SortDirection, groupBy: GroupBy, groupOrder: SortDirection) {
+        const { tabs, activeTabId } = get();
+        const nextTabs = tabs.map((t) => ({ ...t, entries: organizeEntries(t.entries, sortKey, sortDirection, groupBy, groupOrder) }));
+        set({ tabs: nextTabs, entries: nextTabs.find((t) => t.id === activeTabId)?.entries ?? [] });
+      }
+
+      return {
+        currentPath: "",
+        addressInput: "",
+        entries: [],
+        tabs: [],
+        activeTabId: "",
+        quickAccess: [],
+        drives: [],
+        favorites: [],
+        sidebarWidth: 240,
+        previewOpen: false,
+        previewWidth: 320,
+        sortKey: "name",
+        sortDirection: "asc",
+        groupBy: "none",
+        groupOrder: "asc",
+        viewMode: "list",
+        history: [],
+        historyIndex: -1,
+        error: null,
+        contextMenu: null,
+        activePrompt: null,
+        promptTarget: null,
+        clipboard: null,
+        deleteConfirmOpen: false,
+        deleteTarget: null,
+        revealPath: null,
+        selectedPaths: [],
+        selectionAnchor: null,
+        initialized: false,
+
+        // useFileExplorer() (the business-logic hook) is now called from both
+        // FileExplorerView and SearchModal — both mount at startup, so this
+        // must be idempotent, not just "only called once by convention." The
+        // flag is set synchronously, before the first await, so a second call
+        // arriving before the first one's async work resolves still sees it
+        // and bails immediately, rather than double-fetching quickAccess/
+        // drives and double-navigating to THIS_PC.
+        init: async () => {
+          if (get().initialized) return;
+          set({ initialized: true });
+          try {
+            const [quickAccess, drives] = await Promise.all([
+              fileExplorerService.quickAccessDirs(),
+              fileExplorerService.listDrives(),
+            ]);
+            const firstTab = createTab(THIS_PC);
+            set({
+              quickAccess,
+              drives,
+              tabs: [firstTab],
+              activeTabId: firstTab.id,
+              currentPath: firstTab.currentPath,
+              addressInput: firstTab.addressInput,
+              entries: firstTab.entries,
+              history: firstTab.history,
+              historyIndex: firstTab.historyIndex,
+              selectedPaths: firstTab.selectedPaths,
+              selectionAnchor: firstTab.selectionAnchor,
+            });
+            await get().navigate(THIS_PC);
+          } catch (e) {
+            set({ error: String(e) });
+          }
+        },
+
+        navigate: async (path: string) => {
+          const tabId = get().activeTabId;
+          try {
+            const raw = await loadEntries(path);
+            const tab = getTab(tabId);
+            if (!tab) return; // the tab was closed while this load was in flight
+            const { sortKey, sortDirection, groupBy, groupOrder } = get();
+            const entries = organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder);
+            const nextHistory = [...tab.history.slice(0, tab.historyIndex + 1), path];
+            applyTabPatch(tabId, {
+              entries,
+              currentPath: path,
+              addressInput: path === THIS_PC ? "This PC" : path,
+              history: nextHistory,
+              historyIndex: nextHistory.length - 1,
+              selectedPaths: [],
+              selectionAnchor: null,
+            });
+            // Guarded on the tab still being active for the same reason
+            // applyTabPatch is: if the user switched tabs during the await,
+            // this navigate is now for a background tab and must not clobber
+            // the *current* tab's global error banner / reveal signal.
+            // Clears any leftover reveal from an unrelated navigation —
+            // openFileLocation sets revealPath *after* awaiting this (and
+            // never switches tabs), so its own reveal always survives; only
+            // stale ones from plain navigations (double-clicking a folder,
+            // breadcrumbs) get cleared here.
+            if (get().activeTabId === tabId) set({ error: null, revealPath: null });
+          } catch (e) {
+            set({ error: String(e) });
+          }
+        },
+
+        refresh: async () => {
+          const tabId = get().activeTabId;
+          const tab = getTab(tabId);
+          if (!tab || tab.currentPath === THIS_PC) return;
+          try {
+            const raw = await loadEntries(tab.currentPath);
+            const { sortKey, sortDirection, groupBy, groupOrder } = get();
+            applyTabPatch(tabId, { entries: organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder) });
+            set({ error: null });
+          } catch (e) {
+            set({ error: String(e) });
+          }
+        },
+
+        // Re-fetches every tab (active or not) whose currentPath is one of
+        // `paths` — used after a file operation (move/copy/delete/rename)
+        // instead of refresh()'s "just the active tab," since with multiple
+        // tabs open a move/paste/delete/rename can affect a folder that's
+        // sitting open in a *different*, currently-background tab (drag a
+        // file onto another tab, or rename/delete a search result that
+        // lives somewhere other tabs happen to be browsing). Without this,
+        // that other tab keeps showing stale contents until the user
+        // happens to click Refresh themselves. Runs all affected tabs'
+        // reloads concurrently — each is an independent fetch, not a chain.
+        refreshTabsShowing: async (paths: string[]) => {
+          const targets = get().tabs.filter((t) => paths.includes(t.currentPath));
+          await Promise.all(
+            targets.map(async (tab) => {
+              try {
+                const raw = await loadEntries(tab.currentPath);
+                const { sortKey, sortDirection, groupBy, groupOrder } = get();
+                applyTabPatch(tab.id, { entries: organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder) });
+              } catch (e) {
+                if (tab.id === get().activeTabId) set({ error: String(e) });
+              }
+            }),
+          );
+        },
+
+        goBack: () => {
+          const tabId = get().activeTabId;
+          const tab = getTab(tabId);
+          if (!tab || tab.historyIndex <= 0) return;
+          const idx = tab.historyIndex - 1;
+          const path = tab.history[idx];
+          applyTabPatch(tabId, { historyIndex: idx, selectedPaths: [], selectionAnchor: null });
+          loadEntries(path)
+            .then((raw) => {
+              const { sortKey, sortDirection, groupBy, groupOrder } = get();
+              applyTabPatch(tabId, {
+                entries: organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder),
+                currentPath: path,
+                addressInput: path === THIS_PC ? "This PC" : path,
+              });
+            })
+            .catch((e) => set({ error: String(e) }));
+        },
+
+        goForward: () => {
+          const tabId = get().activeTabId;
+          const tab = getTab(tabId);
+          if (!tab || tab.historyIndex >= tab.history.length - 1) return;
+          const idx = tab.historyIndex + 1;
+          const path = tab.history[idx];
+          applyTabPatch(tabId, { historyIndex: idx, selectedPaths: [], selectionAnchor: null });
+          loadEntries(path)
+            .then((raw) => {
+              const { sortKey, sortDirection, groupBy, groupOrder } = get();
+              applyTabPatch(tabId, {
+                entries: organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder),
+                currentPath: path,
+                addressInput: path === THIS_PC ? "This PC" : path,
+              });
+            })
+            .catch((e) => set({ error: String(e) }));
+        },
+
+        goUp: () => {
+          const current = get().currentPath;
+          if (current === THIS_PC) return;
+          const parent = dirname(current);
+          get().navigate(parent === "" ? THIS_PC : parent);
+        },
+
+        // New tabs always start at This PC, matching how the app itself
+        // starts — not a duplicate of the current tab's path (that's a
+        // separate, explicit "open in new tab" action on a specific entry,
+        // see useFileExplorer.ts's openInNewTab). Reuses navigate()'s own
+        // loading/error handling rather than duplicating it — by the time
+        // navigate() reads `activeTabId`/`tabs`, the new tab is already the
+        // active one, so its result lands in the right place for free.
+        newTab: (path: string = THIS_PC) => {
+          const tab = createTab(path);
+          const { tabs } = get();
           set({
-            entries,
-            currentPath: path,
-            addressInput: path === THIS_PC ? "This PC" : path,
-            history: nextHistory,
-            historyIndex: nextHistory.length - 1,
-            error: null,
-            selectedPaths: [],
-            selectionAnchor: null,
+            tabs: [...tabs, tab],
+            activeTabId: tab.id,
+            currentPath: tab.currentPath,
+            addressInput: tab.addressInput,
+            entries: tab.entries,
+            history: tab.history,
+            historyIndex: tab.historyIndex,
+            selectedPaths: tab.selectedPaths,
+            selectionAnchor: tab.selectionAnchor,
           });
-        } catch (e) {
-          set({ error: String(e) });
-        }
-      },
+          get().navigate(path);
+        },
 
-      refresh: async () => {
-        const { currentPath, sortKey, sortDirection, groupBy, groupOrder } = get();
-        if (currentPath === THIS_PC) return;
-        try {
-          const raw = await loadEntries(currentPath);
-          set({ entries: organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder), error: null });
-        } catch (e) {
-          set({ error: String(e) });
-        }
-      },
+        closeTab: (id: string) => {
+          const { tabs, activeTabId } = get();
+          const nextId = nextActiveTabId(tabs, activeTabId, id);
+          if (nextId === null) return; // the only tab left — refuse to close it
+          const remaining = tabs.filter((t) => t.id !== id);
+          if (nextId === activeTabId) {
+            // Closed a background tab — the active tab's own fields are
+            // untouched, just drop the closed one from the list.
+            set({ tabs: remaining });
+            return;
+          }
+          const next = remaining.find((t) => t.id === nextId)!;
+          set({
+            tabs: remaining,
+            activeTabId: next.id,
+            currentPath: next.currentPath,
+            addressInput: next.addressInput,
+            entries: next.entries,
+            history: next.history,
+            historyIndex: next.historyIndex,
+            selectedPaths: next.selectedPaths,
+            selectionAnchor: next.selectionAnchor,
+          });
+        },
 
-      goBack: () => {
-        const { history, historyIndex } = get();
-        if (historyIndex <= 0) return;
-        const idx = historyIndex - 1;
-        const path = history[idx];
-        set({ historyIndex: idx, selectedPaths: [], selectionAnchor: null });
-        loadEntries(path)
-          .then((raw) => {
-            const { sortKey, sortDirection, groupBy, groupOrder } = get();
-            set({
-              entries: organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder),
-              currentPath: path,
-              addressInput: path === THIS_PC ? "This PC" : path,
-            });
-          })
-          .catch((e) => set({ error: String(e) }));
-      },
+        switchTab: (id: string) => {
+          const { activeTabId, tabs } = get();
+          if (id === activeTabId) return;
+          const next = tabs.find((t) => t.id === id);
+          if (!next) return;
+          set({
+            activeTabId: next.id,
+            currentPath: next.currentPath,
+            addressInput: next.addressInput,
+            entries: next.entries,
+            history: next.history,
+            historyIndex: next.historyIndex,
+            selectedPaths: next.selectedPaths,
+            selectionAnchor: next.selectionAnchor,
+          });
+        },
 
-      goForward: () => {
-        const { history, historyIndex } = get();
-        if (historyIndex >= history.length - 1) return;
-        const idx = historyIndex + 1;
-        const path = history[idx];
-        set({ historyIndex: idx, selectedPaths: [], selectionAnchor: null });
-        loadEntries(path)
-          .then((raw) => {
-            const { sortKey, sortDirection, groupBy, groupOrder } = get();
-            set({
-              entries: organizeEntries(raw, sortKey, sortDirection, groupBy, groupOrder),
-              currentPath: path,
-              addressInput: path === THIS_PC ? "This PC" : path,
-            });
-          })
-          .catch((e) => set({ error: String(e) }));
-      },
+        // Doesn't touch which tab is active or its data — just the array's
+        // own order — so there's no top-level-field mirroring to do here,
+        // unlike switchTab/closeTab.
+        reorderTabs: (draggedId: string, targetId: string, insertAfter: boolean) => {
+          set({ tabs: reorderTabs(get().tabs, draggedId, targetId, insertAfter) });
+        },
 
-      goUp: () => {
-        const current = get().currentPath;
-        if (current === THIS_PC) return;
-        const parent = dirname(current);
-        get().navigate(parent === "" ? THIS_PC : parent);
-      },
+        setRevealPath: (path: string | null) => set({ revealPath: path }),
+        setAddressInput: (value: string) => applyTabPatch(get().activeTabId, { addressInput: value }),
+        setSidebarWidth: (width: number) => set({ sidebarWidth: width }),
+        togglePreview: () => set({ previewOpen: !get().previewOpen }),
+        setPreviewWidth: (width: number) => set({ previewWidth: width }),
 
-      setAddressInput: (value: string) => set({ addressInput: value }),
-      setSidebarWidth: (width: number) => set({ sidebarWidth: width }),
-      togglePreview: () => set({ previewOpen: !get().previewOpen }),
-      setPreviewWidth: (width: number) => set({ previewWidth: width }),
+        // Always resets to ascending — matches Explorer's own convention of a
+        // fresh column always starting ascending, rather than carrying over
+        // whatever direction the previous column happened to be in.
+        setSortKey: (key: SortKey) => {
+          const { groupBy, groupOrder } = get();
+          set({ sortKey: key, sortDirection: "asc" });
+          reorganizeAllTabs(key, "asc", groupBy, groupOrder);
+        },
+        setSortDirection: (direction: SortDirection) => {
+          const { sortKey, groupBy, groupOrder } = get();
+          set({ sortDirection: direction });
+          reorganizeAllTabs(sortKey, direction, groupBy, groupOrder);
+        },
+        toggleSortDirection: () => get().setSortDirection(get().sortDirection === "asc" ? "desc" : "asc"),
+        setGroupBy: (groupBy: GroupBy) => {
+          const { sortKey, sortDirection, groupOrder } = get();
+          set({ groupBy });
+          reorganizeAllTabs(sortKey, sortDirection, groupBy, groupOrder);
+        },
+        setGroupOrder: (direction: SortDirection) => {
+          const { sortKey, sortDirection, groupBy } = get();
+          set({ groupOrder: direction });
+          reorganizeAllTabs(sortKey, sortDirection, groupBy, direction);
+        },
+        setViewMode: (mode: ViewMode) => set({ viewMode: mode }),
 
-      // Always resets to ascending — matches Explorer's own convention of a
-      // fresh column always starting ascending, rather than carrying over
-      // whatever direction the previous column happened to be in.
-      setSortKey: (key: SortKey) => {
-        const { entries, groupBy, groupOrder } = get();
-        set({ sortKey: key, sortDirection: "asc", entries: organizeEntries(entries, key, "asc", groupBy, groupOrder) });
-      },
-      setSortDirection: (direction: SortDirection) => {
-        const { entries, sortKey, groupBy, groupOrder } = get();
-        set({ sortDirection: direction, entries: organizeEntries(entries, sortKey, direction, groupBy, groupOrder) });
-      },
-      toggleSortDirection: () => get().setSortDirection(get().sortDirection === "asc" ? "desc" : "asc"),
-      setGroupBy: (groupBy: GroupBy) => {
-        const { entries, sortKey, sortDirection, groupOrder } = get();
-        set({ groupBy, entries: organizeEntries(entries, sortKey, sortDirection, groupBy, groupOrder) });
-      },
-      setGroupOrder: (direction: SortDirection) => {
-        const { entries, sortKey, sortDirection, groupBy } = get();
-        set({ groupOrder: direction, entries: organizeEntries(entries, sortKey, sortDirection, groupBy, direction) });
-      },
-      setViewMode: (mode: ViewMode) => set({ viewMode: mode }),
+        toggleFavorite: (path: string) => {
+          const { favorites } = get();
+          set({
+            favorites: favorites.includes(path)
+              ? favorites.filter((f) => f !== path)
+              : [...favorites, path],
+          });
+        },
 
-      toggleFavorite: (path: string) => {
-        const { favorites } = get();
-        set({
-          favorites: favorites.includes(path)
-            ? favorites.filter((f) => f !== path)
-            : [...favorites, path],
-        });
-      },
+        openContextMenu: (x: number, y: number, background = false) => set({ contextMenu: { x, y, background } }),
+        closeContextMenu: () => set({ contextMenu: null }),
 
-      openContextMenu: (x: number, y: number, background = false) => set({ contextMenu: { x, y, background } }),
-      closeContextMenu: () => set({ contextMenu: null }),
+        openPrompt: (kind: PromptKind, target?: Entry) => set({ activePrompt: kind, promptTarget: target ?? null }),
+        closePrompt: () => set({ activePrompt: null, promptTarget: null }),
 
-      openPrompt: (kind: PromptKind, target?: Entry) => set({ activePrompt: kind, promptTarget: target ?? null }),
-      closePrompt: () => set({ activePrompt: null, promptTarget: null }),
+        setClipboard: (paths: string[], op: ClipboardOp) => set({ clipboard: { paths, op } }),
+        clearClipboard: () => set({ clipboard: null }),
 
-      setClipboard: (paths: string[], op: ClipboardOp) => set({ clipboard: { paths, op } }),
-      clearClipboard: () => set({ clipboard: null }),
+        openDeleteConfirm: (target?: Entry[]) => set({ deleteConfirmOpen: true, deleteTarget: target ?? null }),
+        closeDeleteConfirm: () => set({ deleteConfirmOpen: false, deleteTarget: null }),
 
-      openDeleteConfirm: (target?: Entry[]) => set({ deleteConfirmOpen: true, deleteTarget: target ?? null }),
-      closeDeleteConfirm: () => set({ deleteConfirmOpen: false, deleteTarget: null }),
+        selectOnly: (path: string) => applyTabPatch(get().activeTabId, { selectedPaths: [path], selectionAnchor: path }),
 
-      selectOnly: (path: string) => set({ selectedPaths: [path], selectionAnchor: path }),
+        toggleSelect: (path: string) => {
+          const { selectedPaths } = get();
+          applyTabPatch(get().activeTabId, {
+            selectedPaths: selectedPaths.includes(path)
+              ? selectedPaths.filter((p) => p !== path)
+              : [...selectedPaths, path],
+            selectionAnchor: path,
+          });
+        },
 
-      toggleSelect: (path: string) => {
-        const { selectedPaths } = get();
-        set({
-          selectedPaths: selectedPaths.includes(path)
-            ? selectedPaths.filter((p) => p !== path)
-            : [...selectedPaths, path],
-          selectionAnchor: path,
-        });
-      },
+        selectRange: (path: string) => {
+          const { entries, selectionAnchor, activeTabId } = get();
+          const paths = entries.map((e) => e.path);
+          const anchorIdx = selectionAnchor ? paths.indexOf(selectionAnchor) : -1;
+          const targetIdx = paths.indexOf(path);
+          if (anchorIdx === -1 || targetIdx === -1) {
+            applyTabPatch(activeTabId, { selectedPaths: [path], selectionAnchor: path });
+            return;
+          }
+          const [start, end] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+          applyTabPatch(activeTabId, { selectedPaths: paths.slice(start, end + 1) });
+        },
 
-      selectRange: (path: string) => {
-        const { entries, selectionAnchor } = get();
-        const paths = entries.map((e) => e.path);
-        const anchorIdx = selectionAnchor ? paths.indexOf(selectionAnchor) : -1;
-        const targetIdx = paths.indexOf(path);
-        if (anchorIdx === -1 || targetIdx === -1) {
-          set({ selectedPaths: [path], selectionAnchor: path });
-          return;
-        }
-        const [start, end] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
-        set({ selectedPaths: paths.slice(start, end + 1) });
-      },
+        ensureSelected: (path: string) => {
+          if (!get().selectedPaths.includes(path)) {
+            applyTabPatch(get().activeTabId, { selectedPaths: [path], selectionAnchor: path });
+          }
+        },
 
-      ensureSelected: (path: string) => {
-        if (!get().selectedPaths.includes(path)) {
-          set({ selectedPaths: [path], selectionAnchor: path });
-        }
-      },
-
-      clearSelection: () => set({ selectedPaths: [], selectionAnchor: null }),
-      clearError: () => set({ error: null }),
-    }),
+        clearSelection: () => applyTabPatch(get().activeTabId, { selectedPaths: [], selectionAnchor: null }),
+        clearError: () => set({ error: null }),
+      };
+    },
     {
       name: "schlag.file-explorer",
       partialize: (state) => ({

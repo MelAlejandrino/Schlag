@@ -11,6 +11,7 @@ import {
   Pencil,
   RotateCw,
   Scissors,
+  SquarePlus,
   Star,
   Trash2,
 } from "lucide-react";
@@ -30,6 +31,11 @@ interface ContextMenuProps {
   // specifically the search-result case (SearchModal.tsx is the one caller
   // that passes this).
   onOpenLocation?: () => void;
+  // Optional the same way onOpenLocation is — folders only (a file has
+  // nowhere to "open a tab to"), gated on selectedIsDir below rather than
+  // on whether the prop was passed, since every caller that shows this menu
+  // for a folder wants it.
+  onOpenInNewTab?: () => void;
   onRename: () => void;
   onCopy: () => void;
   onCut: () => void;
@@ -58,6 +64,7 @@ export function ContextMenu({
   onOpen,
   onOpenWith,
   onOpenLocation,
+  onOpenInNewTab,
   onRename,
   onCopy,
   onCut,
@@ -131,6 +138,12 @@ export function ContextMenu({
         <ExternalLink {...iconProps} />
         Open
       </button>
+      {onOpenInNewTab && selectedIsDir && (
+        <button className={itemClass} onClick={onOpenInNewTab} disabled={selectedCount !== 1}>
+          <SquarePlus {...iconProps} />
+          Open in new tab
+        </button>
+      )}
       {onOpenLocation && (
         <button className={itemClass} onClick={onOpenLocation} disabled={selectedCount !== 1}>
           <FolderOpen {...iconProps} />

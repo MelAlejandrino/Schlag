@@ -28,7 +28,8 @@ pub fn open(db_path: &Path) -> rusqlite::Result<Connection> {
             size INTEGER NOT NULL,
             modified_ms INTEGER NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_files_name ON files(name);",
+        CREATE INDEX IF NOT EXISTS idx_files_name ON files(name);
+        CREATE INDEX IF NOT EXISTS idx_files_recent ON files(is_dir, modified_ms DESC);",
     )?;
 
     // Trigram-tokenized FTS5 index over `name`, so a leading-wildcard
@@ -103,9 +104,30 @@ pub fn set_content_indexed_mtime(conn: &Connection, path: &str, modified_ms: u64
     Ok(())
 }
 
-pub fn delete_content_indexed_mtime(conn: &Connection, path: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM content_index_state WHERE path = ?1", params![path])?;
-    Ok(())
+// All paths content_index_state currently tracks — used to reconcile it
+// directly against exclusion/existence, independent of what's in `files`.
+// This table can drift out of sync with `files` on its own: an in-memory
+// ContentEvent::Remove queued by prune_stale_entries (files.rs) is lost if
+// the app restarts before the content-indexer thread drains it, and once
+// the corresponding `files` row is already gone, prune_stale_entries' own
+// files-derived stale list never re-queues that removal — see indexer.rs's
+// prune_stale_content_state for the reconciliation this backs.
+pub fn content_index_state_paths(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    conn.prepare("SELECT path FROM content_index_state")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect()
+}
+
+// Batches many content_index_state deletes into one transaction — same
+// rationale as delete_batch for `files`: an individual delete per removal
+// event (each its own implicit transaction) is an order of magnitude slower
+// once a real backlog of removals needs processing at once.
+pub fn delete_content_indexed_mtime_batch(conn: &mut Connection, paths: &[String]) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    for path in paths {
+        tx.execute("DELETE FROM content_index_state WHERE path = ?1", params![path])?;
+    }
+    tx.commit()
 }
 
 // The AFTER INSERT/UPDATE/DELETE triggers only cover rows written from now
@@ -162,6 +184,22 @@ pub fn upsert_batch(conn: &mut Connection, rows: &[FileRow]) -> rusqlite::Result
 pub fn delete_by_path(conn: &Connection, path: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM files WHERE path = ?1", params![path])?;
     Ok(())
+}
+
+// Batches many deletes into one transaction — same rationale as
+// upsert_batch: a bare loop of individual delete_by_path calls (each its own
+// implicit transaction/commit) is an order of magnitude slower for a large
+// one-time prune. Confirmed live: prune_stale_entries pruning ~500k
+// newly-AppData-excluded rows out of a real ~1.27M-row index via a per-row
+// loop was still removing entries at only ~750/sec after several seconds
+// (on track to take ~10+ minutes) — the exact same class of slowdown
+// upsert_batch's own comment already describes for inserts.
+pub fn delete_batch(conn: &mut Connection, paths: &[String]) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    for path in paths {
+        tx.execute("DELETE FROM files WHERE path = ?1", params![path])?;
+    }
+    tx.commit()
 }
 
 // Test-only: production code reports progress via IndexStatus's in-memory
@@ -231,6 +269,22 @@ mod tests {
     }
 
     #[test]
+    fn delete_batch_removes_exactly_the_given_paths_in_one_transaction() {
+        let (path, mut conn) = temp_db("schlag_test_db_delete_batch.sqlite");
+
+        upsert_batch(&mut conn, &[row("C:\\a.txt"), row("C:\\b.txt"), row("C:\\c.txt")]).unwrap();
+        assert_eq!(count(&conn).unwrap(), 3);
+
+        delete_batch(&mut conn, &["C:\\a.txt".to_string(), "C:\\c.txt".to_string()]).unwrap();
+        assert_eq!(count(&conn).unwrap(), 1);
+
+        let remaining: String = conn.query_row("SELECT path FROM files", [], |row| row.get(0)).unwrap();
+        assert_eq!(remaining, "C:\\b.txt");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn upsert_batch_commits_all_rows_in_one_transaction() {
         let (path, mut conn) = temp_db("schlag_test_db_batch.sqlite");
 
@@ -243,7 +297,7 @@ mod tests {
 
     #[test]
     fn content_indexed_mtime_round_trips_and_defaults_to_none() {
-        let (path, conn) = temp_db("schlag_test_db_content_state.sqlite");
+        let (path, mut conn) = temp_db("schlag_test_db_content_state.sqlite");
 
         assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), None);
 
@@ -254,8 +308,27 @@ mod tests {
         set_content_indexed_mtime(&conn, "C:\\a.txt", 1_700_000_500_000).unwrap();
         assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), Some(1_700_000_500_000));
 
-        delete_content_indexed_mtime(&conn, "C:\\a.txt").unwrap();
+        delete_content_indexed_mtime_batch(&mut conn, &["C:\\a.txt".to_string()]).unwrap();
         assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), None);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn content_index_state_paths_and_batch_delete_round_trip() {
+        let (path, mut conn) = temp_db("schlag_test_db_content_state_batch.sqlite");
+
+        set_content_indexed_mtime(&conn, "C:\\a.txt", 1_700_000_000_000).unwrap();
+        set_content_indexed_mtime(&conn, "C:\\b.txt", 1_700_000_000_000).unwrap();
+        set_content_indexed_mtime(&conn, "C:\\c.txt", 1_700_000_000_000).unwrap();
+
+        let mut paths = content_index_state_paths(&conn).unwrap();
+        paths.sort();
+        assert_eq!(paths, vec!["C:\\a.txt", "C:\\b.txt", "C:\\c.txt"]);
+
+        delete_content_indexed_mtime_batch(&mut conn, &["C:\\a.txt".to_string(), "C:\\c.txt".to_string()]).unwrap();
+        let remaining = content_index_state_paths(&conn).unwrap();
+        assert_eq!(remaining, vec!["C:\\b.txt"]);
 
         let _ = std::fs::remove_file(&path);
     }
