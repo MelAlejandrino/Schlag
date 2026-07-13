@@ -4,6 +4,7 @@ mod fs_ops;
 mod indexer;
 mod preview;
 mod search;
+mod settings;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -18,6 +19,15 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("index.db");
+
+            app.manage(data_dir.clone());
+
+            // Load app settings (excluded dirs, etc.) — persisted as JSON.
+            let settings_path = data_dir.join("settings.json");
+            let app_settings = settings::load_settings(&settings_path);
+            indexer::set_user_excluded_dirs(app_settings.excluded_dirs.clone());
+            app.manage(Mutex::new(app_settings));
+            app.manage(settings_path);
 
             // Search gets its own connection to the same WAL-mode db rather
             // than sharing the indexer thread's writer connection — WAL
@@ -68,6 +78,9 @@ pub fn run() {
             content_index::search_content,
             preview::preview_text,
             preview::list_archive_entries,
+            settings::get_settings,
+            settings::update_settings,
+            settings::get_storage_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

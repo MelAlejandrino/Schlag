@@ -324,6 +324,7 @@ export function useFileExplorer() {
     canGoBack: store.historyIndex > 0,
     canGoForward: store.historyIndex < store.history.length - 1,
     isThisPC: store.currentPath === THIS_PC,
+    isSettings: store.viewState === "settings",
     isCurrentFavorite: store.favorites.includes(store.currentPath),
     selectedEntries,
     selectedIsDir: selectedEntries.length === 1 && selectedEntries[0].is_dir,

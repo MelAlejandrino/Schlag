@@ -22,6 +22,13 @@ interface ShortcutHandlers {
   onCopy: () => void;
   onCut: () => void;
   onPaste: () => void;
+  onNewTab: () => void;
+  onCloseTab: () => void;
+  onNextTab: () => void;
+  onPrevTab: () => void;
+  onEscape: () => void;
+  onFocusAddress: () => void;
+  onOpenSettings: () => void;
 }
 
 // Global keyboard shortcuts — Ctrl+key combos that work from anywhere in the
@@ -35,14 +42,26 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
       // Never fire inside text inputs — the user is typing.
       if (isTextInput(e)) return;
 
+      const ctrl = e.ctrlKey || e.metaKey;
+
+      // Ctrl+Tab / Ctrl+Shift+Tab — switch tabs, always active even
+      // when a modal is open (matches browser convention).
+      if (ctrl && e.key === "Tab") {
+        e.preventDefault();
+        if (e.shiftKey) handlers.onPrevTab();
+        else handlers.onNextTab();
+        return;
+      }
+
       // Never fire when a modal is open — each modal has its own Escape/Enter.
       const { activePrompt, deleteConfirmOpen } = useFileExplorerStore.getState();
       const { isOpen: searchOpen } = useSearchStore.getState();
       if (activePrompt || deleteConfirmOpen || searchOpen) return;
 
-      const ctrl = e.ctrlKey || e.metaKey;
-
-      if (ctrl && e.key === "r") {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handlers.onEscape();
+      } else if (ctrl && e.key === "r") {
         e.preventDefault();
         handlers.onRefresh();
       } else if (ctrl && e.key === "f") {
@@ -74,6 +93,18 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
       } else if (ctrl && e.key === "v") {
         e.preventDefault();
         handlers.onPaste();
+      } else if (ctrl && e.key === "t") {
+        e.preventDefault();
+        handlers.onNewTab();
+      } else if (ctrl && e.key === "w") {
+        e.preventDefault();
+        handlers.onCloseTab();
+      } else if (ctrl && e.key === "l") {
+        e.preventDefault();
+        handlers.onFocusAddress();
+      } else if (ctrl && e.key === ",") {
+        e.preventDefault();
+        handlers.onOpenSettings();
       }
     }
 

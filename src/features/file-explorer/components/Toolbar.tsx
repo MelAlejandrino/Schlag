@@ -50,6 +50,7 @@ interface ToolbarProps {
   onGroupByChange: (groupBy: GroupBy) => void;
   groupOrder: SortDirection;
   onGroupOrderChange: (direction: SortDirection) => void;
+  focusAddressBar?: number;
 }
 
 const focusRing =
@@ -92,6 +93,7 @@ export function Toolbar({
   onGroupByChange,
   groupOrder,
   onGroupOrderChange,
+  focusAddressBar,
 }: ToolbarProps) {
   const { tick, trigger } = useRefreshAnimation(onRefresh);
   const viewButtonRef = useRef<HTMLButtonElement>(null);
@@ -167,6 +169,7 @@ export function Toolbar({
         onChange={onAddressChange}
         onSubmit={onAddressSubmit}
         onNavigate={onNavigate}
+        focusRequest={focusAddressBar}
       />
 
       <button className={buttonClass} title="Search (click to open)" onClick={onOpenSearch}>

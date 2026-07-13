@@ -70,3 +70,16 @@ export interface ArchiveEntry {
   size: number;
   is_dir: boolean;
 }
+
+// Backend settings persisted as JSON at {app_data_dir}/settings.json.
+export interface AppSettings {
+  excluded_dirs: string[];
+}
+
+// Storage usage info from the backend.
+export interface StorageInfo {
+  index_db_bytes: number;
+  content_index_bytes: number;
+  settings_file_bytes: number;
+  indexed_entry_count: number;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, type DragEvent } from "react";
 import { ChevronDown, ChevronUp, Folder } from "lucide-react";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
 import { formatDate, formatSize } from "../lib/format";
@@ -45,6 +45,7 @@ interface EntryTableProps {
   onSelectRange: (path: string) => void;
   onDelete: () => void;
   onRename: () => void;
+  onPreview?: () => void;
 }
 
 const headerClass = "sticky top-0 bg-surface px-3 py-2 text-left font-mono text-[11px] tracking-wide text-outline uppercase";
@@ -112,6 +113,7 @@ export function EntryTable({
   onSelectRange,
   onDelete,
   onRename,
+  onPreview,
 }: EntryTableProps) {
   // Targets the folder being browsed itself — dropping anywhere that isn't
   // a specific row (a row's own drop target, see EntryRow, stops
@@ -131,7 +133,21 @@ export function EntryTable({
     onDelete,
     onRename,
     scrollRef,
+    onPreview,
   });
+
+  // Wrap onSelect to synchronously update the keyboard focus index when
+  // the user clicks a row — without this, focusedRef only updates via
+  // a post-render useEffect, so an immediate keypress after clicking
+  // would start from the old position (type-ahead bug).
+  const handleSelect = useCallback(
+    (entry: Entry, mods: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
+      const idx = entries.findIndex((e) => e.path === entry.path);
+      if (idx !== -1) entryKeyboard.focusIndex(idx);
+      onSelect(entry, mods);
+    },
+    [entries, onSelect, entryKeyboard],
+  );
 
   // Scroll the reveal target into view once it's in the rendered listing
   // (from "Open file location"). The matching row carries data-reveal, so
@@ -194,7 +210,13 @@ export function EntryTable({
       onDragLeave={backgroundDrop.onDragLeave}
       onDrop={backgroundDrop.onDrop}
     >
-      <table className="w-full border-collapse">
+      <table className="w-full table-fixed border-collapse">
+        <colgroup>
+          <col className="w-[55%]" />
+          <col className="w-[20%]" />
+          <col className="w-[12%]" />
+          <col className="w-[13%]" />
+        </colgroup>
         <thead>
           <tr>
             {COLUMNS.map((column) => (
@@ -235,7 +257,7 @@ export function EntryTable({
                 cut={cutPaths.includes(item.entry.path)}
                 reveal={item.entry.path === revealPath}
                 onOpen={onOpen}
-                onSelect={onSelect}
+                onSelect={handleSelect}
                 onContextMenu={onContextMenu}
                 onDragPaths={onDragPaths}
                 onDrop={onDrop}
@@ -317,13 +339,13 @@ function EntryRow({ entry, selected, cut, reveal, onOpen, onSelect, onContextMen
       }`}
     >
       <td className="px-3 py-1.5 text-[13px]">
-        <span className={`flex items-center gap-2 ${selected ? "text-primary" : "text-on-surface"}`}>
+        <span className={`flex items-start gap-2 ${selected ? "text-primary" : "text-on-surface"}`}>
           {entry.is_dir ? (
-            <Folder size={15} strokeWidth={1.75} className="shrink-0 text-primary" />
+            <Folder size={15} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" />
           ) : (
-            <FileTypeIcon name={entry.name} size={15} strokeWidth={1.75} className="shrink-0 text-outline" />
+            <FileTypeIcon name={entry.name} size={15} strokeWidth={1.75} className="mt-0.5 shrink-0 text-outline" />
           )}
-          <span className="truncate">{entry.name}</span>
+          <span className="min-w-0 break-words">{entry.name}</span>
         </span>
       </td>
       <td className="px-3 py-1.5 font-mono text-[12px] text-on-surface-variant">{formatDate(entry.modified_ms)}</td>

@@ -477,49 +477,13 @@ Restore:
 
 ---
 
-# Keyboard Shortcuts
+# Keyboard Shortcuts ✅
 
-Examples:
+All shortcuts implemented in `useKeyboardShortcuts.ts` (global) and `useEntryKeyboard.ts` (listing-scoped).
 
-Ctrl+P
+Global: Ctrl+Tab / Ctrl+Shift+Tab (switch tabs), Escape (close preview / clear selection), Ctrl+R (refresh), Ctrl+F (search), Ctrl+L (focus address bar), Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+N (new folder), Ctrl+D (toggle favorite), Ctrl+P (toggle preview), Ctrl+C/X/V (copy/cut/paste), F2 (rename), Delete (trash).
 
-Quick Open
-
----
-
-Ctrl+Shift+P
-
-Command Palette
-
----
-
-Space
-
-Quick Preview
-
----
-
-Delete
-
-Move to Trash
-
----
-
-F2
-
-Rename
-
----
-
-Ctrl+L
-
-Focus Address Bar
-
----
-
-Ctrl+F
-
-Search Current Folder
+Listing (when EntryTable/EntryGrid is focused): Arrow keys (grid-aware, skips group headers), Home/End, Enter (open), Space (toggle preview), Delete, F2, Ctrl+A (select all), a-z (type-ahead jump), Shift+↑↓ (range select).
 
 ---
 
@@ -704,8 +668,8 @@ Phase 5 is complete. The remaining items (Split panes, Tags, Workspace restore, 
 
 Polish
 
-- Keyboard shortcuts — Ctrl+T / Ctrl+W (new/close tab), Ctrl+F / Ctrl+L (search/focus address bar), Space (quick preview), F2 (rename), Delete (trash), Ctrl+C / Ctrl+X / Ctrl+V (copy/cut/paste), Ctrl+D (toggle favorite), Escape (close modal/pane)
-- Settings panel — app preferences UI (excluded directories, default sort/view, startup behavior)
+- Keyboard shortcuts ✅ — Ctrl+T / Ctrl+W (new/close tab), Ctrl+Tab / Ctrl+Shift+Tab (cycle tabs), Ctrl+F / Ctrl+L (search/focus address bar), Space (quick preview), F2 (rename), Delete (trash), Ctrl+C / Ctrl+X / Ctrl+V (copy/cut/paste), Ctrl+D (toggle favorite), Ctrl+N (new folder), Ctrl+R (refresh), Ctrl+P (toggle preview), Escape (close preview / clear selection), plus listing-scoped: arrows (group-aware), Home/End, Enter, Ctrl+A, type-ahead, Shift+arrows
+- Settings page ✅ — a full page (`SettingsPage.tsx`) that replaces the main content area (like ThisPCView), with a left sidebar nav for switching between six sections: About Schlag (app info, version, tech stack), Appearance (theme/accent color — placeholders for now), General (startup behavior, default sort/group/view), Indexing (user-added excluded directory names), Storage (index size, content index size, entry count via `get_storage_info` command), and Guide (keyboard shortcuts reference, tips). Navigation: `file-explorer.store.ts`'s `viewState: "browse" | "settings"` controls which view renders in `<main>`; `openSettings()`/`closeSettings()` toggle it. Backend settings persisted as `{app_data_dir}/settings.json` via `settings.rs`; frontend defaults via Zustand localStorage. Toolbar gear icon and Ctrl+, open settings. Indexer's `is_excluded()` checks both built-in and user-provided lists (via `OnceLock`).
 - Theme system — light/dark toggle, user-selectable accent colors
 - Performance optimization — virtual scrolling for large directories, lazy icon loading, memory profiling
 - Accessibility — keyboard-only navigation, screen-reader labels, focus indicators, high-contrast support

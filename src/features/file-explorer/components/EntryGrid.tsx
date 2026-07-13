@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Folder } from "lucide-react";
 import { startDrag } from "../lib/dnd";
 import { useDropTarget } from "../lib/useDropTarget";
-import { useEntryKeyboard } from "../lib/useEntryKeyboard";
+import { useEntryKeyboard, type GridRow } from "../lib/useEntryKeyboard";
 import { previewKind } from "../lib/previewKind";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
 import { fileExplorerService } from "../services/file-explorer.service";
@@ -33,6 +33,7 @@ interface EntryGridProps {
   onSelectRange: (path: string) => void;
   onDelete: () => void;
   onRename: () => void;
+  onPreview?: () => void;
 }
 
 const TILE_SIZE: Record<EntryGridProps["size"], { tile: number; icon: number }> = {
@@ -103,24 +104,12 @@ export function EntryGrid({
   onSelectRange,
   onDelete,
   onRename,
+  onPreview,
 }: EntryGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { tile, icon } = TILE_SIZE[size];
   const [columns, setColumns] = useState(1);
   const backgroundDrop = useDropTarget(currentPath, onDrop);
-
-  // Arrow-key navigation, Enter-to-open, type-ahead jump-to-file.
-  const entryKeyboard = useEntryKeyboard({
-    entries,
-    selectedPaths,
-    onSelectOnly,
-    onSelectRange,
-    onOpen,
-    onDelete,
-    onRename,
-    columns,
-    scrollRef: containerRef,
-  });
 
   // useLayoutEffect (not useEffect) so the column count is right before the
   // first paint — otherwise there'd be a visible flash of a 1-column layout
@@ -139,6 +128,22 @@ export function EntryGrid({
     ro.observe(el);
     return () => ro.disconnect();
   }, [tile]);
+
+  // After-paint fallback: useLayoutEffect's compute() may read a stale
+  // width if the parent flex layout (sidebar + main) hasn't settled yet.
+  // useEffect fires after paint; a second pass with setTimeout catches
+  // any remaining layout settling (e.g. sidebar width being applied).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const compute = () => {
+      const available = el.clientWidth - CONTAINER_PADDING;
+      setColumns(Math.max(1, Math.floor((available + GAP) / (tile + GAP))));
+    };
+    compute();
+    const t = setTimeout(compute, 50);
+    return () => clearTimeout(t);
+  }, [tile, entries]);
 
   const rows = useMemo(() => buildRows(toDisplayItems(entries, groupBy), columns), [entries, groupBy, columns]);
   const tileRowSize = tile + 32;
@@ -162,6 +167,53 @@ export function EntryGrid({
     overscan: 4,
     measureElement: (el) => el.getBoundingClientRect().height,
   });
+
+  // Virtualizer-aware scroll function — the hook's default
+  // scrollIntoView can't reach off-screen virtualized tiles. Stored
+  // in a ref so the hook always reads the latest virtualizer.
+  const scrollToEntryRef = useRef<((path: string) => void) | null>(null);
+  scrollToEntryRef.current = (path: string) => {
+    const rowIndex = rows.findIndex((r) => r.kind === "tiles" && r.entries.some((e) => e.path === path));
+    if (rowIndex !== -1) virtualizer.scrollToIndex(rowIndex, { align: "auto" });
+  };
+
+  // Convert rows to GridRow[] for the hook — it needs to know which
+  // rows are headers so ArrowUp/Down can skip them.
+  const gridRows: GridRow[] = rows.map((r) =>
+    r.kind === "header" ? { kind: "header" } : { kind: "tiles", entries: r.entries },
+  );
+
+  // Arrow-key navigation, Enter-to-open, type-ahead jump-to-file.
+  // Called after rows/virtualizer so gridRows and scrollToEntryRef are
+  // populated — the hook stores both in refs, so the onKeyDown
+  // callback sees them when keydown fires (post-render).
+  const entryKeyboard = useEntryKeyboard({
+    entries,
+    selectedPaths,
+    onSelectOnly,
+    onSelectRange,
+    onOpen,
+    onDelete,
+    onRename,
+    columns,
+    scrollRef: containerRef,
+    scrollToEntryRef,
+    gridRows,
+    onPreview,
+  });
+
+  // Wrap onSelect to synchronously update the keyboard focus index when
+  // the user clicks a tile — without this, focusedRef only updates via
+  // a post-render useEffect, so an immediate keypress after clicking
+  // would start from the old position (type-ahead bug).
+  const handleSelect = useCallback(
+    (entry: Entry, mods: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
+      const idx = entries.findIndex((e) => e.path === entry.path);
+      if (idx !== -1) entryKeyboard.focusIndex(idx);
+      onSelect(entry, mods);
+    },
+    [entries, onSelect, entryKeyboard],
+  );
 
   // Scroll the reveal target into view (from "Open file location"). Unlike
   // EntryTable, the target row may not be mounted at all (virtualized), so a
@@ -277,7 +329,7 @@ export function EntryGrid({
                       selected={selectedPaths.includes(entry.path)}
                       cut={cutPaths.includes(entry.path)}
                       onOpen={onOpen}
-                      onSelect={onSelect}
+                      onSelect={handleSelect}
                       onContextMenu={onContextMenu}
                       onDragPaths={onDragPaths}
                       onDrop={onDrop}

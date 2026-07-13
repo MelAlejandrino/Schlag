@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tantivy::Index;
 use walkdir::WalkDir;
@@ -174,9 +174,26 @@ const EXCLUDED_ROOT_DIR_NAMES: &[&str] = &[
     "documents and settings",
 ];
 
+// User-added exclusions from settings.json, initialized once at startup
+// via `set_user_excluded_dirs()` from `spawn()`. Checked alongside the
+// built-in lists in `is_excluded()`.
+static USER_EXCLUDED_DIRS: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn set_user_excluded_dirs(dirs: Vec<String>) {
+    let _ = USER_EXCLUDED_DIRS.set(dirs);
+}
+
 fn is_excluded(name: &OsStr) -> bool {
     let name = name.to_string_lossy();
-    EXCLUDED_DIR_NAMES.iter().any(|excluded| name.eq_ignore_ascii_case(excluded))
+    if EXCLUDED_DIR_NAMES.iter().any(|excluded| name.eq_ignore_ascii_case(excluded)) {
+        return true;
+    }
+    if let Some(user_dirs) = USER_EXCLUDED_DIRS.get() {
+        if user_dirs.iter().any(|excluded| name.eq_ignore_ascii_case(excluded)) {
+            return true;
+        }
+    }
+    false
 }
 
 // True only for a path whose first component after the drive letter (e.g.

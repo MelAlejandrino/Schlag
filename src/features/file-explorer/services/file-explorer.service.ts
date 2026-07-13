@@ -1,12 +1,14 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import type {
+  AppSettings,
   ArchiveEntry,
   ContentSearchResult,
   Entry,
   IndexStatus,
   QuickAccessDir,
   SearchFilters,
+  StorageInfo,
 } from "../file-explorer.types";
 
 export const fileExplorerService = {
@@ -40,4 +42,7 @@ export const fileExplorerService = {
   // Not an invoke() call, but still a Tauri API — belongs here per this
   // file's own rule (the only place that calls Tauri APIs directly).
   assetUrl: (path: string) => convertFileSrc(path),
+  getSettings: () => invoke<AppSettings>("get_settings"),
+  updateSettings: (settings: AppSettings) => invoke<AppSettings>("update_settings", { newSettings: settings }),
+  getStorageInfo: () => invoke<StorageInfo>("get_storage_info"),
 };

@@ -1,6 +1,7 @@
 import { create } from "zustand/react";
 import { persist } from "zustand/middleware";
 import { fileExplorerService } from "../services/file-explorer.service";
+import { useSettingsStore } from "./settings.store";
 import { dirname } from "../lib/path";
 import type { PromptKind } from "../lib/promptConfig";
 import { sortEntries, type SortDirection, type SortKey } from "../lib/sortEntries";
@@ -108,9 +109,13 @@ interface FileExplorerState {
   // unrelated re-render. Transient, not part of Tab — only ever meaningful
   // for the active tab right after its own navigation.
   revealPath: string | null;
+  focusAddressBar: number;
   initialized: boolean;
+  viewState: "browse" | "settings";
 
   init: () => Promise<void>;
+  openSettings: () => void;
+  closeSettings: () => void;
   navigate: (path: string) => Promise<void>;
   refresh: () => Promise<void>;
   refreshTabsShowing: (paths: string[]) => Promise<void>;
@@ -120,8 +125,11 @@ interface FileExplorerState {
   newTab: (path?: string) => void;
   closeTab: (id: string) => void;
   switchTab: (id: string) => void;
+  nextTab: () => void;
+  prevTab: () => void;
   reorderTabs: (draggedId: string, targetId: string, insertAfter: boolean) => void;
   setRevealPath: (path: string | null) => void;
+  requestFocusAddress: () => void;
   setAddressInput: (value: string) => void;
   setSidebarWidth: (width: number) => void;
   togglePreview: () => void;
@@ -210,9 +218,11 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         deleteConfirmOpen: false,
         deleteTarget: null,
         revealPath: null,
+        focusAddressBar: 0,
         selectedPaths: [],
         selectionAnchor: null,
         initialized: false,
+        viewState: "browse",
 
         // useFileExplorer() (the business-logic hook) is now called from both
         // FileExplorerView and SearchModal — both mount at startup, so this
@@ -229,7 +239,18 @@ export const useFileExplorerStore = create<FileExplorerState>()(
               fileExplorerService.quickAccessDirs(),
               fileExplorerService.listDrives(),
             ]);
-            const firstTab = createTab(THIS_PC);
+
+            // Resolve startup path from settings.
+            const settings = useSettingsStore.getState();
+            let startupPath = THIS_PC;
+            if (settings.startupBehavior === "last-folder") {
+              const lastPath = get().currentPath;
+              if (lastPath && lastPath !== THIS_PC) startupPath = lastPath;
+            } else if (settings.startupBehavior === "custom" && settings.startupPath) {
+              startupPath = settings.startupPath;
+            }
+
+            const firstTab = createTab(startupPath);
             set({
               quickAccess,
               drives,
@@ -243,7 +264,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
               selectedPaths: firstTab.selectedPaths,
               selectionAnchor: firstTab.selectionAnchor,
             });
-            await get().navigate(THIS_PC);
+            await get().navigate(startupPath);
           } catch (e) {
             set({ error: String(e) });
           }
@@ -432,6 +453,22 @@ export const useFileExplorerStore = create<FileExplorerState>()(
           });
         },
 
+        nextTab: () => {
+          const { tabs, activeTabId } = get();
+          if (tabs.length <= 1) return;
+          const idx = tabs.findIndex((t) => t.id === activeTabId);
+          const next = tabs[(idx + 1) % tabs.length];
+          get().switchTab(next.id);
+        },
+
+        prevTab: () => {
+          const { tabs, activeTabId } = get();
+          if (tabs.length <= 1) return;
+          const idx = tabs.findIndex((t) => t.id === activeTabId);
+          const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
+          get().switchTab(prev.id);
+        },
+
         // Doesn't touch which tab is active or its data — just the array's
         // own order — so there's no top-level-field mirroring to do here,
         // unlike switchTab/closeTab.
@@ -440,6 +477,9 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         },
 
         setRevealPath: (path: string | null) => set({ revealPath: path }),
+        requestFocusAddress: () => set({ focusAddressBar: get().focusAddressBar + 1 }),
+        openSettings: () => set({ viewState: "settings" }),
+        closeSettings: () => set({ viewState: "browse" }),
         setAddressInput: (value: string) => applyTabPatch(get().activeTabId, { addressInput: value }),
         setSidebarWidth: (width: number) => set({ sidebarWidth: width }),
         togglePreview: () => set({ previewOpen: !get().previewOpen }),
@@ -539,6 +579,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         groupBy: state.groupBy,
         groupOrder: state.groupOrder,
         viewMode: state.viewMode,
+        currentPath: state.currentPath,
       }),
     },
   ),

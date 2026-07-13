@@ -4,6 +4,15 @@ import type { Entry } from "../file-explorer.types";
 
 const TYPEAHEAD_TIMEOUT_MS = 500;
 
+// Matches EntryGrid's local Row type — a header is a label-only row, a
+// tiles row holds up to `columns` entries. Passed in from EntryGrid so
+// ArrowUp/Down can skip header rows instead of assuming every row has
+// `columns` entries.
+export interface GridRow {
+  kind: "header" | "tiles";
+  entries?: Entry[];
+}
+
 interface EntryKeyboardOptions {
   entries: Entry[];
   selectedPaths: string[];
@@ -14,6 +23,16 @@ interface EntryKeyboardOptions {
   onRename: () => void;
   columns?: number;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
+  // Ref to a virtualizer-aware scroll function — the default
+  // scrollIntoView can't reach off-screen virtualized tiles. Using a
+  // ref avoids the hook needing to be called after the virtualizer is
+  // created (EntryGrid computes it after the hook call).
+  scrollToEntryRef?: React.RefObject<((path: string) => void) | null>;
+  // EntryGrid passes its rows so ArrowUp/Down can skip header rows
+  // when grouping is active.
+  gridRows?: GridRow[];
+  // Spacebar handler — toggles the preview pane.
+  onPreview?: () => void;
 }
 
 export function useEntryKeyboard({
@@ -26,6 +45,9 @@ export function useEntryKeyboard({
   onRename,
   columns = 1,
   scrollRef,
+  scrollToEntryRef,
+  gridRows,
+  onPreview,
 }: EntryKeyboardOptions) {
   const typeaheadRef = useRef("");
   const typeaheadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -33,6 +55,19 @@ export function useEntryKeyboard({
   // problem where selectedPaths hasn't re-rendered yet between rapid
   // keydown events, causing arrow keys to jump or skip.
   const focusedRef = useRef(-1);
+
+  // Refs for the latest values — the onKeyDown callback reads these
+  // instead of the closure-captured props so it always sees the current
+  // entries/columns even if a re-render hasn't flushed yet (e.g. a
+  // quick keypress right after a folder change or resize).
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
+  const gridRowsRef = useRef(gridRows);
+  gridRowsRef.current = gridRows;
+  const onPreviewRef = useRef(onPreview);
+  onPreviewRef.current = onPreview;
 
   // Keep focusedRef in sync with the actual selection — when the user
   // clicks a row (or a programmatic selectOnly lands), update the ref
@@ -43,18 +78,110 @@ export function useEntryKeyboard({
       return;
     }
     const last = selectedPaths[selectedPaths.length - 1];
-    const idx = entries.findIndex((e) => e.path === last);
+    const idx = entriesRef.current.findIndex((e) => e.path === last);
     if (idx !== -1) focusedRef.current = idx;
   }, [selectedPaths, entries]);
 
+  // When columns change (window resize / sidebar drag), adjust
+  // focusedRef so the focused entry stays in the same visual row.
+  // Without this, ArrowUp/Down calculate idx±newColumns from a position
+  // that was correct for the old layout, landing on the wrong column.
+  const prevColumnsRef = useRef(columns);
+  useEffect(() => {
+    if (prevColumnsRef.current !== columns && focusedRef.current !== -1) {
+      const row = Math.floor(focusedRef.current / prevColumnsRef.current);
+      const col = focusedRef.current % prevColumnsRef.current;
+      const maxCol = columns - 1;
+      const newCol = Math.min(col, maxCol);
+      focusedRef.current = row * columns + newCol;
+    }
+    prevColumnsRef.current = columns;
+  }, [columns]);
+
+  // Synchronous focus update — called by EntryGrid/EntryTable when the
+  // user clicks a tile/row, so focusedRef is current before any
+  // subsequent keydown fires (the useEffect that syncs via
+  // selectedPaths runs post-render, too late for an immediate keypress).
+  const focusIndex = useCallback((index: number) => {
+    focusedRef.current = index;
+  }, []);
+
+  // Scroll an entry into view. Uses the virtualizer-aware callback
+  // when available (EntryGrid), falling back to plain scrollIntoView
+  // (EntryTable — all rows are in the DOM, no virtualization).
   const scrollTo = useCallback(
     (index: number) => {
-      if (!scrollRef?.current || index < 0 || index >= entries.length) return;
-      const path = entries[index].path;
-      const el = scrollRef.current.querySelector(`[data-entry-path="${CSS.escape(path)}"]`);
-      if (el) el.scrollIntoView({ block: "nearest" });
+      const ents = entriesRef.current;
+      if (index < 0 || index >= ents.length) return;
+      const path = ents[index].path;
+      // Try the virtualizer-aware scroll first (EntryGrid).
+      const virtualScroll = scrollToEntryRef?.current;
+      if (virtualScroll) {
+        virtualScroll(path);
+      } else if (scrollRef?.current) {
+        const el = scrollRef.current.querySelector(`[data-entry-path="${CSS.escape(path)}"]`);
+        if (el) el.scrollIntoView({ block: "nearest" });
+      }
     },
-    [entries, scrollRef],
+    [scrollRef, scrollToEntryRef],
+  );
+
+  // Grid-aware ArrowUp/Down — when gridRows is provided (EntryGrid
+  // with grouping), walks the actual rows structure to skip header
+  // rows. Without gridRows (EntryTable), falls back to the simple
+  // idx ± columns math.
+  const moveVertical = useCallback(
+    (currentIdx: number, direction: "up" | "down", cols: number): number => {
+      const rows = gridRowsRef.current;
+      if (!rows || rows.length === 0) {
+        // No grid rows — plain columns-based navigation (EntryTable).
+        return direction === "down" ? currentIdx + cols : currentIdx - cols;
+      }
+
+      // Find which row and column the current entry occupies by
+      // walking the rows and counting flat indices.
+      let flatIdx = 0;
+      let currentRow = -1;
+      let currentCol = 0;
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r];
+        if (row.kind === "header") continue;
+        const rowEntries = row.entries ?? [];
+        for (let c = 0; c < rowEntries.length; c++) {
+          if (flatIdx === currentIdx) {
+            currentRow = r;
+            currentCol = c;
+            break;
+          }
+          flatIdx++;
+        }
+        if (currentRow !== -1) break;
+      }
+
+      if (currentRow === -1) return currentIdx;
+
+      // Walk in the requested direction, skipping header rows.
+      const step = direction === "down" ? 1 : -1;
+      let targetRow = currentRow + step;
+      while (targetRow >= 0 && targetRow < rows.length) {
+        if (rows[targetRow].kind === "tiles") break;
+        targetRow += step;
+      }
+
+      if (targetRow < 0 || targetRow >= rows.length) return currentIdx;
+
+      // Compute the flat index of the entry at (targetRow, currentCol).
+      let idx = 0;
+      for (let r = 0; r < targetRow; r++) {
+        if (rows[r].kind === "tiles") {
+          idx += (rows[r].entries ?? []).length;
+        }
+      }
+      const targetEntries = rows[targetRow].entries ?? [];
+      const col = Math.min(currentCol, targetEntries.length - 1);
+      return idx + col;
+    },
+    [],
   );
 
   // Move focus to `index`, update the ref immediately (so the next
@@ -62,33 +189,35 @@ export function useEntryKeyboard({
   // the entry, and scroll it into view.
   const jumpTo = useCallback(
     (index: number) => {
-      if (entries.length === 0) return;
-      const clamped = Math.max(0, Math.min(index, entries.length - 1));
+      const ents = entriesRef.current;
+      if (ents.length === 0) return;
+      const clamped = Math.max(0, Math.min(index, ents.length - 1));
       focusedRef.current = clamped;
-      onSelectOnly(entries[clamped].path);
+      onSelectOnly(ents[clamped].path);
       scrollTo(clamped);
     },
-    [entries, onSelectOnly, scrollTo],
+    [onSelectOnly, scrollTo],
   );
 
   const typeAheadJump = useCallback(
     (buffer: string) => {
-      if (entries.length === 0) return;
+      const ents = entriesRef.current;
+      if (ents.length === 0) return;
       const lower = buffer.toLowerCase();
       // Start from the entry AFTER the current focus so repeated single
       // letters cycle through all matches.
       const start = focusedRef.current + 1;
-      for (let i = 0; i < entries.length; i++) {
-        const idx = (start + i) % entries.length;
-        if (entries[idx].name.toLowerCase().startsWith(lower)) {
+      for (let i = 0; i < ents.length; i++) {
+        const idx = (start + i) % ents.length;
+        if (ents[idx].name.toLowerCase().startsWith(lower)) {
           focusedRef.current = idx;
-          onSelectOnly(entries[idx].path);
+          onSelectOnly(ents[idx].path);
           scrollTo(idx);
           return;
         }
       }
     },
-    [entries, onSelectOnly, scrollTo],
+    [onSelectOnly, scrollTo],
   );
 
   const onKeyDown = useCallback(
@@ -96,18 +225,33 @@ export function useEntryKeyboard({
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
+      // Read from refs, not the closure — guarantees current values even
+      // if the callback was created before a recent re-render.
+      const ents = entriesRef.current;
+      const cols = columnsRef.current;
       const idx = focusedRef.current;
-      const len = entries.length;
+      const len = ents.length;
       if (len === 0) return;
 
-      const isGrid = columns > 1;
+      const isGrid = cols > 1;
+
+      // Shared type-ahead handler — called from case "a" (plain) and default.
+      const doTypeAhead = () => {
+        e.preventDefault();
+        if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current);
+        typeaheadRef.current += e.key;
+        typeAheadJump(typeaheadRef.current);
+        typeaheadTimer.current = setTimeout(() => {
+          typeaheadRef.current = "";
+        }, TYPEAHEAD_TIMEOUT_MS);
+      };
 
       switch (e.key) {
         case "ArrowDown": {
           e.preventDefault();
-          const next = idx === -1 ? 0 : idx + columns;
+          const next = idx === -1 ? 0 : moveVertical(idx, "down", cols);
           if (e.shiftKey && idx !== -1) {
-            onSelectRange(entries[Math.min(next, len - 1)].path);
+            onSelectRange(ents[Math.min(Math.max(next, 0), len - 1)].path);
           } else {
             jumpTo(next);
           }
@@ -116,9 +260,9 @@ export function useEntryKeyboard({
 
         case "ArrowUp": {
           e.preventDefault();
-          const next = idx === -1 ? len - 1 : idx - columns;
+          const next = idx === -1 ? len - 1 : moveVertical(idx, "up", cols);
           if (e.shiftKey && idx !== -1) {
-            onSelectRange(entries[Math.max(next, 0)].path);
+            onSelectRange(ents[Math.max(next, 0)].path);
           } else {
             jumpTo(next);
           }
@@ -151,7 +295,12 @@ export function useEntryKeyboard({
 
         case "Enter":
           e.preventDefault();
-          if (idx >= 0) onOpen(entries[idx]);
+          if (idx >= 0) onOpen(ents[idx]);
+          break;
+
+        case " ":
+          e.preventDefault();
+          onPreviewRef.current?.();
           break;
 
         case "Delete":
@@ -168,27 +317,23 @@ export function useEntryKeyboard({
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
             const { selectOnly, toggleSelect } = useFileExplorerStore.getState();
-            selectOnly(entries[0].path);
+            selectOnly(ents[0].path);
             for (let i = 1; i < len; i++) {
-              toggleSelect(entries[i].path);
+              toggleSelect(ents[i].path);
             }
+          } else {
+            doTypeAhead();
           }
           break;
 
         default:
           if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            e.preventDefault();
-            if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current);
-            typeaheadRef.current += e.key;
-            typeAheadJump(typeaheadRef.current);
-            typeaheadTimer.current = setTimeout(() => {
-              typeaheadRef.current = "";
-            }, TYPEAHEAD_TIMEOUT_MS);
+            doTypeAhead();
           }
           break;
       }
     },
-    [entries, columns, jumpTo, onSelectRange, onOpen, onDelete, onRename, typeAheadJump],
+    [jumpTo, onSelectRange, onOpen, onDelete, onRename, typeAheadJump, moveVertical],
   );
 
   useEffect(() => {
@@ -197,5 +342,5 @@ export function useEntryKeyboard({
     };
   }, []);
 
-  return { onKeyDown };
+  return { onKeyDown, focusIndex };
 }

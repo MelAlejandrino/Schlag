@@ -15,6 +15,8 @@ import { IndexStatusBadge } from "./components/IndexStatusBadge";
 import { PromptModal } from "./components/PromptModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { SearchModal } from "./components/SearchModal";
+import { SettingsPage } from "./components/SettingsPage";
+import { WindowControls } from "./components/WindowControls";
 import { WindowResizeHandles } from "./components/WindowResizeHandles";
 
 export function FileExplorerView() {
@@ -33,6 +35,16 @@ export function FileExplorerView() {
     onCopy: explorer.copySelected,
     onCut: explorer.cutSelected,
     onPaste: explorer.pasteIntoCurrent,
+    onNewTab: () => explorer.newTab(),
+    onCloseTab: () => explorer.closeTab(explorer.activeTabId),
+    onNextTab: () => explorer.nextTab(),
+    onPrevTab: () => explorer.prevTab(),
+    onFocusAddress: () => explorer.requestFocusAddress(),
+    onOpenSettings: () => explorer.openSettings(),
+    onEscape: () => {
+      if (explorer.previewOpen) explorer.togglePreview();
+      else explorer.clearSelection();
+    },
   });
 
   useEffect(() => {
@@ -51,17 +63,21 @@ export function FileExplorerView() {
       className="flex h-screen flex-col overflow-hidden bg-surface text-on-surface"
       onContextMenu={(e) => e.preventDefault()}
     >
-      <TabBar
-        tabs={explorer.tabs}
-        activeTabId={explorer.activeTabId}
-        onSwitchTab={explorer.switchTab}
-        onCloseTab={explorer.closeTab}
-        onNewTab={explorer.newTab}
-        onReorderTab={explorer.reorderTabs}
-        onDrop={explorer.dropOnto}
-      />
+      {explorer.isSettings ? (
+        <SettingsTitleBar />
+      ) : (
+        <TabBar
+          tabs={explorer.tabs}
+          activeTabId={explorer.activeTabId}
+          onSwitchTab={explorer.switchTab}
+          onCloseTab={explorer.closeTab}
+          onNewTab={explorer.newTab}
+          onReorderTab={explorer.reorderTabs}
+          onDrop={explorer.dropOnto}
+        />
+      )}
 
-      <Toolbar
+      {!explorer.isSettings && <Toolbar
         canGoBack={explorer.canGoBack}
         canGoForward={explorer.canGoForward}
         canGoUp={!explorer.isThisPC}
@@ -92,21 +108,25 @@ export function FileExplorerView() {
         onGroupByChange={explorer.setGroupBy}
         groupOrder={explorer.groupOrder}
         onGroupOrderChange={explorer.setGroupOrder}
-      />
+        focusAddressBar={explorer.focusAddressBar}
+      />}
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar
-          quickAccess={explorer.quickAccess}
-          favorites={explorer.favorites}
-          drives={explorer.drives}
-          currentPath={explorer.currentPath}
-          onNavigate={explorer.navigate}
-          onUnstar={explorer.toggleFavorite}
-          onDrop={explorer.dropOnto}
-          onOpenInNewTab={explorer.newTab}
-          onToggleFavorite={explorer.toggleFavorite}
-          onShowProperties={explorer.showPropertiesForPath}
-        />
+        {!explorer.isSettings && (
+          <Sidebar
+            quickAccess={explorer.quickAccess}
+            favorites={explorer.favorites}
+            drives={explorer.drives}
+            currentPath={explorer.currentPath}
+            onNavigate={explorer.navigate}
+            onUnstar={explorer.toggleFavorite}
+            onDrop={explorer.dropOnto}
+            onOpenInNewTab={explorer.newTab}
+            onToggleFavorite={explorer.toggleFavorite}
+            onShowProperties={explorer.showPropertiesForPath}
+            onOpenSettings={explorer.openSettings}
+          />
+        )}
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           {explorer.error && (
@@ -123,7 +143,9 @@ export function FileExplorerView() {
             </div>
           )}
 
-          {explorer.isThisPC ? (
+          {explorer.isSettings ? (
+            <SettingsPage onBack={explorer.closeSettings} />
+          ) : explorer.isThisPC ? (
             <ThisPCView
               quickAccess={explorer.quickAccess}
               favorites={explorer.favorites}
@@ -154,6 +176,7 @@ export function FileExplorerView() {
               onSelectRange={explorer.selectRange}
               onDelete={explorer.deleteSelected}
               onRename={explorer.renameSelected}
+              onPreview={explorer.togglePreview}
             />
           ) : (
             <EntryGrid
@@ -176,6 +199,7 @@ export function FileExplorerView() {
               onSelectRange={explorer.selectRange}
               onDelete={explorer.deleteSelected}
               onRename={explorer.renameSelected}
+              onPreview={explorer.togglePreview}
             />
           )}
         </main>
@@ -234,6 +258,16 @@ export function FileExplorerView() {
       <IndexStatusBadge />
 
       <WindowResizeHandles />
+    </div>
+  );
+}
+
+function SettingsTitleBar() {
+  return (
+    <div className="flex h-9 shrink-0 items-center border-b border-surface-container-highest bg-surface-container-low">
+      <span className="ml-3 text-[12px] font-medium text-on-surface">Settings</span>
+      <span className="flex-1 self-stretch" data-tauri-drag-region />
+      <WindowControls />
     </div>
   );
 }

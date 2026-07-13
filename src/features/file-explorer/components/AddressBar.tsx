@@ -9,14 +9,22 @@ interface AddressBarProps {
   onChange: (value: string) => void;
   onSubmit: () => void;
   onNavigate: (path: string) => void;
+  // Incremented by Ctrl+L to request focus — AddressBar enters edit
+  // mode when this changes, same one-shot-signal pattern as revealPath.
+  focusRequest?: number;
 }
 
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-container focus-visible:ring-offset-1 focus-visible:ring-offset-surface-container";
 
-export function AddressBar({ currentPath, isThisPC, value, onChange, onSubmit, onNavigate }: AddressBarProps) {
+export function AddressBar({ currentPath, isThisPC, value, onChange, onSubmit, onNavigate, focusRequest }: AddressBarProps) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Ctrl+L signal — enter edit mode when the counter increments.
+  useEffect(() => {
+    if (focusRequest && focusRequest > 0) setEditing(true);
+  }, [focusRequest]);
 
   useEffect(() => {
     if (editing) {

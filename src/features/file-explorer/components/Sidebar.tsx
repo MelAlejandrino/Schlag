@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
-import { Monitor, Star, X } from "lucide-react";
+import { Monitor, Settings, Star, X } from "lucide-react";
 import { basename, longestMatchingPath } from "../lib/path";
 import { useDropTarget } from "../lib/useDropTarget";
 import { useSidebarResize } from "../lib/useSidebarResize";
@@ -25,6 +25,7 @@ interface SidebarProps {
   onOpenInNewTab: (path: string) => void;
   onToggleFavorite: (path: string) => void;
   onShowProperties: (path: string) => void;
+  onOpenSettings: () => void;
 }
 
 interface SidebarMenuState {
@@ -44,6 +45,7 @@ export function Sidebar({
   onOpenInNewTab,
   onToggleFavorite,
   onShowProperties,
+  onOpenSettings,
 }: SidebarProps) {
   const activePath = longestMatchingPath(currentPath, [
     ...quickAccess.map((d) => d.path),
@@ -79,7 +81,7 @@ export function Sidebar({
     // would get clipped: per the CSS overflow spec, setting overflow-y also
     // forces the other axis to compute as auto (not visible), so any
     // negative-offset bleed on the handle would be cut off.
-    <aside className="relative flex shrink-0" style={{ width }}>
+    <aside className="relative flex shrink-0 flex-col" style={{ width }}>
       <div className="themed-scroll min-w-0 flex-1 overflow-y-auto border-r border-surface-container-highest bg-surface-container-lowest p-3">
         <button
           onClick={() => onNavigate(THIS_PC)}
@@ -132,6 +134,16 @@ export function Sidebar({
             />
           ))}
         </div>
+      </div>
+
+      <div className="shrink-0 border-t border-surface-container-highest bg-surface-container-lowest px-3 py-2">
+        <button
+          onClick={onOpenSettings}
+          className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-outline transition-colors duration-150 hover:bg-surface-container hover:text-on-surface ${focusRing}`}
+        >
+          <Settings size={14} strokeWidth={1.75} />
+          Settings
+        </button>
       </div>
 
       <div
