@@ -104,18 +104,96 @@ const EXCLUDED_DIR_NAMES: &[&str] = &[
     ".android",
     ".expo",
     ".ollama",
-    // Build output.
+    // GitKraken's own workspace-tracking folder (cloudWorkspaces.json,
+    // repoMapping.json, etc.) — app config, not user content.
+    ".gk",
+    // The XDG "user-local" tree (bin/share/state) several Linux-descended
+    // CLI tools (pipx, uv, poetry) write under $HOME even on Windows —
+    // nothing a user creates or names by hand, same category as .cargo/.npm.
+    ".local",
+    // Same category, wider ecosystem coverage — Python, JS package managers
+    // and version managers, and language/build-tool caches not already
+    // covered above. All dot-prefixed (except site-packages/venv above,
+    // already covered), which on Windows means "created by a tool," not
+    // "a user made this folder via Explorer" — nobody hand-types a leading
+    // dot when naming their own folder in the UI.
+    ".yarn",
+    ".pnpm-store",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".ipynb_checkpoints",
+    ".pyenv",
+    ".nvm",
+    ".rvm",
+    ".sdkman",
+    ".stack-work",
+    ".ccache",
+    ".conan",
+    ".conan2",
+    ".platformio",
+    ".pub-cache",
+    ".dart_tool",
+    ".bundle",
+    ".terraform",
+    ".terraform.d",
+    ".serverless",
+    ".vercel",
+    ".netlify",
+    ".firebase",
+    // The XDG "user-config" tree — same reasoning/risk as .cache/.local
+    // above: plenty of cross-platform CLI tools (gh, gcloud, htop, and
+    // others that hardcode "~/.config" regardless of OS) write here even on
+    // Windows, and it's the same "nobody hand-creates a dot-folder" case.
+    ".config",
+    // Build output — plain English words, so a real (if small) collision
+    // risk with a user's own folder, same tier already accepted for
+    // target/dist/build below; all four are near-universally build-tool or
+    // test-tool output in practice, not personal document folders.
     "target",
     "dist",
     "build",
     ".next",
+    ".nuxt",
+    ".output",
+    ".svelte-kit",
+    ".angular",
+    ".astro",
+    ".docusaurus",
+    ".turbo",
+    ".parcel-cache",
+    "coverage",
+    ".nyc_output",
+    "htmlcov",
+    // Per-project IDE/editor bookkeeping (workspace settings, indexes,
+    // local history) — generated/managed by the editor, not authored by the
+    // user, and never searched for by folder name. Same bucket as .git: the
+    // *contents* can technically be user-adjacent (e.g. .vscode/settings.json
+    // holds real preferences), but the folder itself is tool state, matching
+    // how .git's own config/commit metadata is excluded regardless.
+    ".vscode",
+    ".idea",
+    ".vs",
+    ".fleet",
+    ".settings",
+    ".metadata",
+    ".history",
+    // Version control systems other than Git — same rationale as .git above.
+    ".svn",
+    ".hg",
+    ".bzr",
     // Never index credentials. This isn't a noise/relevance judgment like
     // the rest of this list — a file explorer that surfaces SSH private
     // keys, `known_hosts`, or `authorized_keys` filenames (and, if any ever
     // matched an extractable extension, content) in a general-purpose
     // Recent Files or search UI is a real exposure, independent of whether
     // those files are ever actually modified often enough to be "noisy".
+    // .aws/.azure are the same category, just cloud-CLI credential stores
+    // (access keys, service-principal tokens) instead of SSH keys.
     ".ssh",
+    ".aws",
+    ".azure",
     // The entire per-user application-data tree — Roaming, Local, and
     // LocalLow all live directly under a folder literally named "AppData",
     // so this one entry prunes all three at once. Browser profiles (Chrome's
@@ -303,6 +381,17 @@ pub fn index_status(status: tauri::State<Arc<IndexStatus>>) -> IndexStatusSnapsh
         indexed_count: status.indexed_count.load(Ordering::Relaxed),
         content_indexed_count: status.content_indexed_count.load(Ordering::Relaxed),
     }
+}
+
+// So SettingsPage's "Built-in" chip list is always this list, not a
+// hand-copied second one that silently drifted out of sync (found live —
+// the frontend's own hardcoded copy had 8 of the ~30 real entries).
+// EXCLUDED_ROOT_DIR_NAMES isn't included: it matches only at a drive's own
+// root, a different (narrower) rule than this anywhere-in-path list, and
+// blending the two would misrepresent what actually gets excluded where.
+#[tauri::command]
+pub fn built_in_excluded_dirs() -> Vec<String> {
+    EXCLUDED_DIR_NAMES.iter().map(|s| s.to_string()).collect()
 }
 
 // Spawns the one background thread that owns the SQLite connection for the

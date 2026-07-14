@@ -700,6 +700,21 @@ AI
 
 ---
 
+## Phase 9
+
+Cross-platform (Linux/macOS) — scoped, not started
+
+Tauri itself is cross-platform, but this codebase has made several deliberate Windows-only choices (see `CLAUDE.md`'s Architecture section) that make this a real port, not a recompile:
+
+- Drive enumeration probes `A:`–`Z:` (`fs_ops.rs`) — Linux/macOS have a single root (`/`) with mount points instead, needs its own listing strategy.
+- Open With / Properties (`fs_ops.rs`) shell out to `ShellExecuteExW` via the Windows-only `windows` crate — no equivalent API; Linux would need something like `xdg-open`/a custom app-picker, macOS its own Finder/AppleScript calls, and neither platform has a native "Properties" dialog in the same sense.
+- `.github/workflows/release.yml` builds `windows-latest` only, by explicit decision — a real cross-platform release needs its own build/sign/notarize (macOS) pipeline per OS.
+- Not yet audited: path-separator assumptions throughout `lib/path.ts` and any other Windows-path-string handling.
+
+Deliberately not implemented yet — revisit if/when there's actual demand for a non-Windows build.
+
+---
+
 # Non-Functional Requirements
 
 ## Startup

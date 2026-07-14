@@ -6,12 +6,14 @@ import {
   BookOpen,
   Database,
   FolderSearch,
+  GitFork,
   Info,
   Loader2,
   Palette,
   Plus,
   RefreshCw,
   Settings,
+  User,
   X,
 } from "lucide-react";
 import {
@@ -24,6 +26,7 @@ import type { SortKey } from "../lib/sortEntries";
 import type { GroupBy } from "../lib/groupEntries";
 import type { ViewMode } from "../store/file-explorer.store";
 import { useUpdater } from "../lib/useUpdater";
+import { fileExplorerService } from "../services/file-explorer.service";
 
 // ─── Design tokens ────────────────────────────────────────────────
 // Every value here maps to a DESIGN.md token or an established pattern
@@ -203,6 +206,27 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
 
 // ─── About ────────────────────────────────────────────────────────
 
+function LinkRow({
+  icon: Icon,
+  label,
+  url,
+}: {
+  icon: typeof GitFork;
+  label: string;
+  url: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => fileExplorerService.openUrl(url)}
+      className={`flex w-fit items-center gap-2 rounded px-1 py-0.5 text-[12px] text-on-surface-variant transition-colors duration-150 hover:text-primary ${focusRing}`}
+    >
+      <Icon size={14} strokeWidth={1.75} />
+      {label}
+    </button>
+  );
+}
+
 function AboutSection() {
   const [version, setVersion] = useState("");
   const updater = useUpdater();
@@ -246,6 +270,23 @@ function AboutSection() {
               {tech}
             </span>
           ))}
+        </div>
+      </Section>
+
+      <hr className="border-surface-container-highest" />
+
+      <Section title="Links">
+        <div className="flex flex-col gap-1.5">
+          <LinkRow
+            icon={GitFork}
+            label="Schlag on GitHub"
+            url="https://github.com/MelAlejandrino/Schlag"
+          />
+          <LinkRow
+            icon={User}
+            label="Developer: MelAlejandrino"
+            url="https://github.com/MelAlejandrino"
+          />
         </div>
       </Section>
 
@@ -481,14 +522,19 @@ function GeneralSection() {
 
 // ─── Indexing ─────────────────────────────────────────────────────
 
-const BUILTIN_DIRS = ["node_modules", ".git", ".cache", "AppData", "target", ".cargo", ".npm", ".ssh"];
-
 // is_excluded (indexer.rs) matches a single path component by name — a
 // value containing a path separator can never match a real entry, so it
 // would silently exclude nothing. Same reserved-character convention as
 // promptConfig.ts's validateFilename, checked here instead of imported
 // since this is a different concern (exclusion input, not a file/folder name).
 const PATH_SEPARATOR = /[/\\]/;
+
+// The built-in list (indexer.rs's EXCLUDED_DIR_NAMES) is ~75 entries —
+// showing all of them inline turned the Section into a wall of chips.
+// Preview a handful and push the rest behind a "+N more" button/modal
+// instead, same "don't show everything at once" call already made for
+// EntryGrid/EntryTable's virtualization, just at a much smaller scale here.
+const BUILT_IN_PREVIEW_COUNT = 14;
 
 // The inverse mistake for the path field below: a value with no drive
 // prefix (a bare name, or a relative fragment) can never equal or prefix a
@@ -533,6 +579,55 @@ function RemovableChip({
         <X size={10} strokeWidth={2} />
       </button>
     </span>
+  );
+}
+
+/** The full built-in exclusion list, behind the "+N more" button below —
+ * same backdrop/dialog shape as ConfirmModal (Escape-to-close, click-outside
+ * dismiss), just listing rather than confirming, so no destructive-action
+ * styling. Not a shared component with ConfirmModal — considered and
+ * declined, same "different content shapes" call already made for
+ * ViewMenu/ContextMenu in FileExplorerView's own architecture notes. */
+function BuiltInDirsModal({ dirs, onClose }: { dirs: string[]; onClose: () => void }) {
+  return (
+    <div
+      className="animate-backdrop-in fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="built-in-dirs-modal-title"
+        className="animate-dialog-in flex max-h-[70vh] w-96 flex-col gap-3 rounded-lg border border-surface-container-highest bg-surface-container-high p-4 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span id="built-in-dirs-modal-title" className="text-[13px] font-medium text-on-surface">
+            Built-in excluded directories ({dirs.length})
+          </span>
+          <button
+            type="button"
+            className={`shrink-0 rounded p-1 text-outline transition-colors duration-150 hover:bg-surface-container-highest hover:text-on-surface ${focusRing}`}
+            onClick={onClose}
+            autoFocus
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+        </div>
+
+        <div className="themed-scroll flex flex-wrap gap-1.5 overflow-y-auto">
+          {dirs.map((name) => (
+            <span
+              key={name}
+              className="rounded-sm border border-surface-container-highest bg-surface-container px-2 py-0.5 font-mono text-[11px] text-outline-variant"
+            >
+              {name}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -584,6 +679,7 @@ function IndexingSection() {
   const [dirError, setDirError] = useState("");
   const [newPath, setNewPath] = useState("");
   const [pathError, setPathError] = useState("");
+  const [showAllBuiltIn, setShowAllBuiltIn] = useState(false);
   // Exclusions only take effect on the next scan, which only ever runs at
   // startup (indexer.rs) — this session-local flag surfaces a restart
   // prompt right where the change was made, instead of leaving the user to
@@ -594,6 +690,15 @@ function IndexingSection() {
     const trimmed = newDir.trim();
     if (PATH_SEPARATOR.test(trimmed)) {
       setDirError("Enter a directory name only, not a path (e.g. .venv, not C:\\foo\\.venv).");
+      return;
+    }
+    const lower = trimmed.toLowerCase();
+    if (store.builtInExcludedDirs.some((d) => d.toLowerCase() === lower)) {
+      setDirError(`"${trimmed}" is already excluded by default — no need to add it again.`);
+      return;
+    }
+    if (store.excludedDirs.includes(lower)) {
+      setDirError(`"${trimmed}" is already in your custom list.`);
       return;
     }
     store.addExcludedDir(trimmed);
@@ -613,6 +718,15 @@ function IndexingSection() {
     const trimmed = newPath.trim();
     if (!ABSOLUTE_PATH.test(trimmed)) {
       setPathError("Enter a full path, e.g. D:\\Downloads\\ISOs.");
+      return;
+    }
+    // Exact-path match only (trailing separator/casing aside) — same
+    // normalization addExcludedPath itself already dedupes against, just
+    // checked here first so a duplicate gets a real inline error instead of
+    // addExcludedPath's silent no-op.
+    const normalized = trimmed.replace(/[\\/]+$/, "").toLowerCase();
+    if (store.excludedPaths.some((p) => p.replace(/[\\/]+$/, "").toLowerCase() === normalized)) {
+      setPathError(`"${trimmed}" is already excluded.`);
       return;
     }
     store.addExcludedPath(trimmed);
@@ -658,8 +772,8 @@ function IndexingSection() {
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
             <SubLabel>Built-in</SubLabel>
-            <div className="flex flex-wrap gap-1.5">
-              {BUILTIN_DIRS.map((name) => (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {store.builtInExcludedDirs.slice(0, BUILT_IN_PREVIEW_COUNT).map((name) => (
                 <span
                   key={name}
                   className="rounded-sm border border-surface-container-highest bg-surface-container px-2 py-0.5 font-mono text-[11px] text-outline-variant"
@@ -667,6 +781,15 @@ function IndexingSection() {
                   {name}
                 </span>
               ))}
+              {store.builtInExcludedDirs.length > BUILT_IN_PREVIEW_COUNT && (
+                <button
+                  type="button"
+                  className={`rounded-sm px-2 py-0.5 text-[11px] text-outline underline-offset-2 transition-colors duration-150 hover:text-on-surface hover:underline ${focusRing}`}
+                  onClick={() => setShowAllBuiltIn(true)}
+                >
+                  +{store.builtInExcludedDirs.length - BUILT_IN_PREVIEW_COUNT} more
+                </button>
+              )}
             </div>
           </div>
 
@@ -745,6 +868,10 @@ function IndexingSection() {
           error={pathError}
         />
       </Section>
+
+      {showAllBuiltIn && (
+        <BuiltInDirsModal dirs={store.builtInExcludedDirs} onClose={() => setShowAllBuiltIn(false)} />
+      )}
     </div>
   );
 }

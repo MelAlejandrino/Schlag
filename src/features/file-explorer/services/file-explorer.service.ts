@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import type {
   AppSettings,
   ContentSearchResult,
@@ -16,6 +16,7 @@ export const fileExplorerService = {
   listDrives: () => invoke<QuickAccessDir[]>("list_drives"),
   listDir: (path: string) => invoke<Entry[]>("list_dir", { path }),
   openFile: (path: string) => openPath(path),
+  openUrl: (url: string) => openUrl(url),
   createDir: (path: string) => invoke<void>("create_dir", { path }),
   createFile: (path: string) => invoke<void>("create_file", { path }),
   renameEntry: (from: string, to: string) => invoke<void>("rename_entry", { from, to }),
@@ -25,6 +26,7 @@ export const fileExplorerService = {
   openWithDialog: (path: string) => invoke<void>("open_with_dialog", { path }),
   showProperties: (path: string) => invoke<void>("show_properties", { path }),
   indexStatus: () => invoke<IndexStatus>("index_status"),
+  builtInExcludedDirs: () => invoke<string[]>("built_in_excluded_dirs"),
   searchFiles: (query: string, filters: SearchFilters, keywordMode: boolean) =>
     // Tauri's command-argument matching (distinct from struct-field serde,
     // which this project keeps snake_case end-to-end) camelCases parameter

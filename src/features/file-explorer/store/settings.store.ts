@@ -28,6 +28,10 @@ interface SettingsState {
   // Backend settings (synced from Rust on load/save)
   excludedDirs: string[];
   excludedPaths: string[];
+  // The real indexer.rs EXCLUDED_DIR_NAMES list, fetched once — not
+  // hand-copied into the frontend, which is what silently drifted out of
+  // sync before (see loadSettings below).
+  builtInExcludedDirs: string[];
 
   // Storage info (fetched on demand)
   storageInfo: StorageInfo | null;
@@ -67,14 +71,18 @@ export const useSettingsStore = create<SettingsState>()(
 
       excludedDirs: [],
       excludedPaths: [],
+      builtInExcludedDirs: [],
       storageInfo: null,
 
       setActiveSection: (section) => set({ activeSection: section }),
 
       loadSettings: async () => {
         try {
-          const backend: AppSettings = await fileExplorerService.getSettings();
-          set({ excludedDirs: backend.excluded_dirs, excludedPaths: backend.excluded_paths });
+          const [backend, builtIn]: [AppSettings, string[]] = await Promise.all([
+            fileExplorerService.getSettings(),
+            fileExplorerService.builtInExcludedDirs(),
+          ]);
+          set({ excludedDirs: backend.excluded_dirs, excludedPaths: backend.excluded_paths, builtInExcludedDirs: builtIn });
         } catch (e) {
           console.warn("Failed to load backend settings:", e);
         }

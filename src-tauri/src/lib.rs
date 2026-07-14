@@ -76,6 +76,7 @@ pub fn run() {
             fs_ops::open_with_dialog,
             fs_ops::show_properties,
             indexer::index_status,
+            indexer::built_in_excluded_dirs,
             search::search_files,
             search::recent_files,
             content_index::search_content,
