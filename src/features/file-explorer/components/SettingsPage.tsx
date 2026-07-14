@@ -41,7 +41,7 @@ const fieldClass =
   "w-full rounded border border-surface-container-highest bg-surface-container px-2 py-1 text-[12px] text-on-surface outline-none transition-colors duration-150 focus:border-primary-container";
 
 // Section heading — the established "small chrome label" pattern:
-// JetBrains Mono, 11px, uppercase, tracked, outline color.
+// monospace, 11px, uppercase, tracked, outline color.
 const sectionHeading = "font-mono text-[11px] uppercase tracking-wide text-outline";
 
 // ─── Reusable primitives ──────────────────────────────────────────

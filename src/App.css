@@ -22,7 +22,7 @@
   --color-on-error-container: #ffdad6;
 
   --font-sans: "Geist", -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: "Geist", -apple-system, "Segoe UI", sans-serif;
 }
 
 /* Light theme — every Tailwind utility already resolves through var(--color-*)
@@ -135,19 +135,6 @@
   font-weight: 600;
   font-display: swap;
 }
-@font-face {
-  font-family: "JetBrains Mono";
-  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: "JetBrains Mono";
-  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
-  font-weight: 500;
-  font-display: swap;
-}
-
 html,
 body {
   margin: 0;
@@ -158,6 +145,13 @@ body {
 .themed-scroll {
   scrollbar-width: thin;
   scrollbar-color: var(--color-surface-container-highest) transparent;
+  /* Reserves the scrollbar's track space always, so its appearing/
+     disappearing never changes the container's available width. Without
+     this, a CSS Grid using auto-fill (ThisPCView's Folders/Favorites/Drives
+     tiles) can thrash: scrollbar appears -> width shrinks -> fewer columns
+     fit -> more rows -> height crosses the threshold back -> scrollbar
+     disappears -> repeat, which reads as the thumb never settling. */
+  scrollbar-gutter: stable;
 }
 
 .themed-scroll::-webkit-scrollbar {

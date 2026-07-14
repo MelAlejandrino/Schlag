@@ -106,13 +106,13 @@ typography:
     lineHeight: 18px
     letterSpacing: '0'
   label-md:
-    fontFamily: JetBrains Mono
+    fontFamily: Geist
     fontSize: 12px
     fontWeight: '500'
     lineHeight: 16px
     letterSpacing: 0.02em
   code-xs:
-    fontFamily: JetBrains Mono
+    fontFamily: Geist
     fontSize: 11px
     fontWeight: '400'
     lineHeight: 14px
@@ -172,7 +172,7 @@ Four selectable accents (Settings → Appearance → Accent Color): Cyber Indigo
 - Tertiary (the favorite/star color) is **not** part of the accent system — it stays a fixed amber regardless of which accent is selected, theme-dependent only.
 
 ## Typography
-Typography is the core of the file explorer experience. We use **Geist** for its exceptional legibility and technical aesthetic. For metadata, file paths, and technical details, we employ **JetBrains Mono** to provide a distinct visual "mode" for data-heavy information.
+Typography is the core of the file explorer experience. We use **Geist** throughout, including for metadata, file paths, and technical details — one typeface for the whole app rather than switching families for data-heavy information.
 
 Headlines are kept compact to maximize vertical space. Body text is optimized at 14px for comfortable reading of file names, while 13px is used for sidebar items and secondary metadata to maintain a high information density without sacrificing clarity.
 

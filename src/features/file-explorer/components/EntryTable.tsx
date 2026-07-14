@@ -167,6 +167,20 @@ export function EntryTable({
     // rows into a visibly resizing scrollbar thumb. Rounding locks every
     // measurement to the exact CSS height, so getTotalSize() is deterministic.
     measureElement: (el) => Math.round(el.getBoundingClientRect().height),
+    // The sticky column-header row above sits in the same scroll container
+    // but isn't one of the virtualizer's tracked items — without telling it
+    // about that leading space, its scrollToIndex/align math is computed as
+    // if row 0 started at real scrollTop 0, when it actually starts
+    // HEADER_ROW_SIZE lower. That constant offset made jumping to a row near
+    // the bottom (arrow keys, type-ahead) undershoot by one row's height,
+    // leaving it clipped at the edge instead of fully in view.
+    scrollMargin: HEADER_ROW_SIZE,
+    // Reserves HEADER_ROW_SIZE of "don't put an item here" space at the top
+    // of the viewport for align: "start"/"auto" — without it, jumping to a
+    // row near the top scrolls it to real screenY 0, which is directly
+    // behind the sticky header (still visually on top of everything), so
+    // the row was hidden until the user nudged the scroll further by hand.
+    scrollPaddingStart: HEADER_ROW_SIZE,
   });
 
   // Virtualizer-aware scroll-by-path — the hook's default scrollIntoView
@@ -297,7 +311,11 @@ export function EntryTable({
                 top: 0,
                 left: 0,
                 width: "100%",
-                transform: `translateY(${virtualRow.start}px)`,
+                // virtualRow.start is in scrollMargin-inclusive (real scroll
+                // container) coordinates; this div is positioned relative to
+                // its own wrapper, which starts after the sticky header, so
+                // the margin has to be subtracted back out here.
+                transform: `translateY(${virtualRow.start - virtualizer.options.scrollMargin}px)`,
               }}
             >
               {row.kind === "header" ? (

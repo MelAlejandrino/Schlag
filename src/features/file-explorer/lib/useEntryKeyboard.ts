@@ -261,7 +261,17 @@ export function useEntryKeyboard({
       const doTypeAhead = () => {
         e.preventDefault();
         if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current);
-        typeaheadRef.current += e.key;
+        const key = e.key.toLowerCase();
+        const buffer = typeaheadRef.current;
+        // Spamming the same letter (Explorer's own convention) cycles
+        // through every match for that one letter instead of building an
+        // ever-longer prefix — without this, buffer keeps growing ("s" ->
+        // "ss" -> "sss") and stops matching anything after the first
+        // repeat, which read as "can't jump by spamming a letter". This
+        // also means a fast repeat never has to wait out the timeout: each
+        // press is its own single-char search, not an accumulating one.
+        const isRepeat = buffer.length > 0 && [...buffer].every((c) => c === key);
+        typeaheadRef.current = isRepeat ? key : buffer + key;
         typeAheadJump(typeaheadRef.current);
         typeaheadTimer.current = setTimeout(() => {
           typeaheadRef.current = "";
