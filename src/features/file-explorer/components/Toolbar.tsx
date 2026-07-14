@@ -136,26 +136,33 @@ export function Toolbar({
   return (
     <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-surface-container-highest bg-surface-container-low p-2">
       <div className="flex items-center overflow-hidden rounded-lg border border-surface-container-highest">
-        <button className={groupButtonClass} onClick={onBack} disabled={!canGoBack} title="Back">
+        <button className={groupButtonClass} onClick={onBack} disabled={!canGoBack} title="Back" aria-label="Back">
           <ArrowLeft {...iconProps} />
         </button>
         <div className="h-5 w-px bg-surface-container-highest" />
-        <button className={groupButtonClass} onClick={onForward} disabled={!canGoForward} title="Forward">
+        <button
+          className={groupButtonClass}
+          onClick={onForward}
+          disabled={!canGoForward}
+          title="Forward"
+          aria-label="Forward"
+        >
           <ArrowRight {...iconProps} />
         </button>
         <div className="h-5 w-px bg-surface-container-highest" />
-        <button className={groupButtonClass} onClick={onUp} disabled={!canGoUp} title="Up">
+        <button className={groupButtonClass} onClick={onUp} disabled={!canGoUp} title="Up" aria-label="Up one level">
           <ArrowUp {...iconProps} />
         </button>
       </div>
 
-      <button className={buttonClass} title="Refresh" onClick={trigger}>
+      <button className={buttonClass} title="Refresh" aria-label="Refresh" onClick={trigger}>
         <RotateCw {...iconProps} key={tick} className="animate-spin-once" />
       </button>
 
       <button
         className={`${buttonClass} ${isCurrentFavorite ? "border-tertiary-container text-tertiary" : ""}`}
         title={isCurrentFavorite ? "Unstar this folder" : "Star this folder"}
+        aria-label={isCurrentFavorite ? "Unstar this folder" : "Star this folder"}
         onClick={onToggleFavorite}
         disabled={isThisPC}
       >
@@ -172,16 +179,28 @@ export function Toolbar({
         focusRequest={focusAddressBar}
       />
 
-      <button className={buttonClass} title="Search (click to open)" onClick={onOpenSearch}>
+      <button className={buttonClass} title="Search (click to open)" aria-label="Search" onClick={onOpenSearch}>
         <Search {...iconProps} />
       </button>
 
       <div className="flex items-center overflow-hidden rounded-lg border border-surface-container-highest">
-        <button className={groupButtonClass} title="New folder" onClick={onNewFolder} disabled={isThisPC}>
+        <button
+          className={groupButtonClass}
+          title="New folder"
+          aria-label="New folder"
+          onClick={onNewFolder}
+          disabled={isThisPC}
+        >
           <FolderPlus {...iconProps} />
         </button>
         <div className="h-5 w-px bg-surface-container-highest" />
-        <button className={groupButtonClass} title="New file" onClick={onNewFile} disabled={isThisPC}>
+        <button
+          className={groupButtonClass}
+          title="New file"
+          aria-label="New file"
+          onClick={onNewFile}
+          disabled={isThisPC}
+        >
           <FilePlus {...iconProps} />
         </button>
       </div>
@@ -190,6 +209,7 @@ export function Toolbar({
         <button
           className={`${groupButtonClass} ${previewOpen ? "text-primary" : ""}`}
           title={previewOpen ? "Hide preview pane" : "Show preview pane"}
+          aria-label={previewOpen ? "Hide preview pane" : "Show preview pane"}
           onClick={onTogglePreview}
         >
           {previewOpen ? <PanelRightClose {...iconProps} /> : <PanelRight {...iconProps} />}
@@ -199,6 +219,9 @@ export function Toolbar({
           ref={viewButtonRef}
           className={`${groupButtonClass} ${viewMenuAnchor ? "text-primary" : ""}`}
           title="View, sort, and group"
+          aria-label="View, sort, and group"
+          aria-haspopup="menu"
+          aria-expanded={!!viewMenuAnchor}
           onClick={toggleViewMenu}
         >
           <LayoutGrid {...iconProps} />
@@ -209,6 +232,7 @@ export function Toolbar({
         <ViewMenu
           x={viewMenuAnchor.x}
           y={viewMenuAnchor.y}
+          onDismiss={() => setViewMenuAnchor(null)}
           viewMode={viewMode}
           onViewModeChange={onViewModeChange}
           sortKey={sortKey}

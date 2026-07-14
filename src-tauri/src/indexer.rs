@@ -183,6 +183,46 @@ pub fn set_user_excluded_dirs(dirs: Vec<String>) {
     let _ = USER_EXCLUDED_DIRS.set(dirs);
 }
 
+// User-added full-path exclusions from settings.json — unlike
+// USER_EXCLUDED_DIRS (a bare name, matched anywhere), each entry here is one
+// specific location. Normalized once up front (lowercased, trailing
+// separator trimmed) so is_excluded_path() can do a plain prefix compare per
+// call instead of re-normalizing on every check.
+static USER_EXCLUDED_PATHS: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn set_user_excluded_paths(paths: Vec<String>) {
+    let normalized = paths.iter().map(|p| normalize_path(p)).collect();
+    let _ = USER_EXCLUDED_PATHS.set(normalized);
+}
+
+fn normalize_path(path: &str) -> String {
+    path.trim_end_matches(['\\', '/']).to_lowercase()
+}
+
+// True if `path` is exactly one of the user's excluded paths, or nested
+// inside one. A plain `starts_with` on the un-normalized string would also
+// match a sibling that merely shares a prefix (`C:\Foo` matching
+// `C:\FooBar`), so the descendant check requires the next character to be a
+// path separator, not just any suffix. Split from is_excluded_path() so the
+// comparison itself is testable against a plain Vec<String>, without going
+// through the process-global, set-only-once OnceLock.
+fn path_matches_excluded(path_str: &str, excluded_paths: &[String]) -> bool {
+    excluded_paths
+        .iter()
+        .any(|excluded| path_str == *excluded || path_str.starts_with(&format!("{excluded}\\")))
+}
+
+fn is_excluded_path(path: &Path) -> bool {
+    let Some(user_paths) = USER_EXCLUDED_PATHS.get() else {
+        return false;
+    };
+    if user_paths.is_empty() {
+        return false;
+    }
+    let path_str = normalize_path(&path.to_string_lossy());
+    path_matches_excluded(&path_str, user_paths)
+}
+
 fn is_excluded(name: &OsStr) -> bool {
     let name = name.to_string_lossy();
     if EXCLUDED_DIR_NAMES.iter().any(|excluded| name.eq_ignore_ascii_case(excluded)) {
@@ -222,7 +262,9 @@ fn is_excluded_root_dir(path: &Path) -> bool {
 // `C:\Windows` must be recognized as excluded here too, not just pruned from
 // the initial directory walk.
 fn path_is_excluded(path: &Path) -> bool {
-    path.components().any(|c| is_excluded(c.as_os_str())) || is_excluded_root_dir(path)
+    path.components().any(|c| is_excluded(c.as_os_str()))
+        || is_excluded_root_dir(path)
+        || is_excluded_path(path)
 }
 
 pub struct IndexStatus {
@@ -384,7 +426,10 @@ fn scan_drive(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, conte
     match fs::read_dir(root) {
         Ok(entries) => {
             for entry in entries.filter_map(Result::ok) {
-                if is_excluded(&entry.file_name()) || is_excluded_root_dir(&entry.path()) {
+                if is_excluded(&entry.file_name())
+                    || is_excluded_root_dir(&entry.path())
+                    || is_excluded_path(&entry.path())
+                {
                     continue;
                 }
                 match entry.metadata() {
@@ -410,7 +455,15 @@ fn scan_drive(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, conte
 
 fn walk_subtree(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, content_tx: &Sender<ContentEvent>) {
     let mut batch = Vec::with_capacity(BATCH_SIZE);
-    for entry in WalkDir::new(root).into_iter().filter_entry(|e| !is_excluded(e.file_name())) {
+    // Unlike is_excluded_root_dir (only ever relevant at a drive's own top
+    // level — see that constant's comment), a user-excluded *path* can be
+    // anywhere, including deep inside a subtree scan_drive has already
+    // handed off here — so is_excluded_path needs its own check per entry,
+    // not just at the root-level loop above.
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !is_excluded(e.file_name()) && !is_excluded_path(e.path()))
+    {
         let entry = match entry {
             Ok(e) => e,
             Err(err) => {
@@ -933,6 +986,28 @@ mod tests {
         assert!(path_is_excluded(Path::new(r"C:\Users\carlo\AppData\Local\Temp\a.txt")));
         assert!(path_is_excluded(Path::new(r"C:\Windows\System32\foo.dll")));
         assert!(!path_is_excluded(Path::new(r"C:\Users\carlo\Documents\report.txt")));
+    }
+
+    #[test]
+    fn path_matches_excluded_matches_exactly_and_descendants_only() {
+        let excluded = vec![normalize_path(r"D:\Downloads\ISOs")];
+
+        assert!(path_matches_excluded(&normalize_path(r"D:\Downloads\ISOs"), &excluded));
+        assert!(path_matches_excluded(&normalize_path(r"D:\Downloads\ISOs\win11.iso"), &excluded));
+        // Case-insensitive, matching every other name check in this module.
+        assert!(path_matches_excluded(&normalize_path(r"D:\downloads\isos\win11.iso"), &excluded));
+
+        // A sibling that merely shares a prefix must not match — this is
+        // the whole reason the descendant check requires a trailing
+        // separator rather than a plain starts_with.
+        assert!(!path_matches_excluded(&normalize_path(r"D:\Downloads\ISOsBackup"), &excluded));
+        assert!(!path_matches_excluded(&normalize_path(r"D:\Downloads\other.txt"), &excluded));
+    }
+
+    #[test]
+    fn normalize_path_lowercases_and_strips_trailing_separator() {
+        assert_eq!(normalize_path(r"D:\Downloads\ISOs\"), r"d:\downloads\isos");
+        assert_eq!(normalize_path(r"D:\Downloads\ISOs"), r"d:\downloads\isos");
     }
 
     #[test]

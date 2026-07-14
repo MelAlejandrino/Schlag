@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+/* Dark theme (default) — unchanged values, now also the fallback for any
+   attribute this file doesn't override. */
 @theme {
   --color-surface: #131313;
   --color-surface-container-lowest: #0e0e0e;
@@ -21,6 +23,98 @@
 
   --font-sans: "Geist", -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Light theme — every Tailwind utility already resolves through var(--color-*)
+   (Tailwind v4's @theme emits real custom properties, not baked-in hex), so
+   overriding them under [data-theme="light"] re-themes the whole app with no
+   utility-class changes anywhere. Cool, purple-tinted neutrals (hue 278, the
+   brand's own indigo hue) — deliberately NOT the warm cream/sand near-white
+   that's become the generic "AI light mode" default; this app's own
+   PRODUCT.md calls for technical minimalism, not consumer softness.
+   Every value below is OKLCH-derived and contrast-checked against WCAG AA
+   (body text >=4.5:1, UI borders >=3:1) — see the per-token notes below. */
+[data-theme="light"] {
+  /* Tightened to sit much closer to true white than a first pass allowed —
+     the toolbar/title bar (surface-container-low) sit one step BELOW the
+     main content's own surface tone (correct Material light-mode
+     convention: chrome recedes instead of popping like it does in dark
+     mode), but the initial gap between them read as a visibly grayer band
+     across the whole top of the window, i.e. "the whole background looks
+     gray" — confirmed live. Shrinking the lowest four steps down to a
+     ~2% lightness spread (while keeping -high/-highest a bit further out,
+     since those need to stay visibly distinct for hover/selected rows)
+     keeps the large passive chrome areas reading as white while still
+     giving interactive states real separation. */
+  --color-surface: #fdfdff;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f9fafd;
+  --color-surface-container: #f4f5f9;
+  --color-surface-container-high: #ebecf3;
+  --color-surface-container-highest: #dfe1e9;
+  --color-on-surface: #181a24;
+  --color-on-surface-variant: #494c5e;
+  --color-outline: #595c6f;
+  /* Matches the existing dark theme's own outline-variant/surface contrast
+     (~2:1) rather than forcing 4.5:1 — outline-variant is used as small
+     dim text in a couple of spots (SettingsPage's sub-labels) in BOTH
+     themes today; that's a pre-existing, cross-theme gap, not something
+     introduced here, and it's Phase 6's separate Accessibility item to
+     address, not this theme pass. */
+  --color-outline-variant: #abadbb;
+  /* Favorite/star color (Toolbar) — theme-dependent only, not tied to the
+     user's chosen accent. */
+  --color-tertiary: #a44100;
+  --color-tertiary-container: #b15300;
+  /* Unlike primary-container (below), error-container genuinely needs to
+     invert for light mode: FileExplorerView/SearchModal's error banners
+     render bg-error-container/20 (alpha-blended toward the page surface)
+     with on-error-container as the banner's text color. Keeping the dark
+     theme's saturated-red container unchanged here would blend to a pale
+     pink wash in light mode while on-error-container stayed a light pink
+     text — verified unreadable (1.2:1). A proper light container (soft
+     pink tint) + dark on-error-container text fixes both the solid-fill
+     use (ConfirmModal's Delete button) and the wash use at once. */
+  --color-error: #a50013;
+  --color-error-container: #fed2cd;
+  --color-on-error-container: #5f0000;
+  /* Light-mode text color for the default accent (indigo) — see the
+     accent block below for why this token alone flips per-theme while
+     primary-container doesn't. */
+  --color-primary: #3d33b0;
+}
+
+/* Accent colors — primary-container is shared across BOTH themes: it's
+   always a solid, saturated fill sitting behind hardcoded/token white-ish
+   text (PromptModal's Create button, ConfirmModal's Delete button), so it
+   doesn't need to invert for light mode. Only `primary` (the text/icon
+   role used for active states, links, selection) flips between a light
+   tint for dark backgrounds and a dark, saturated tone for light
+   backgrounds — hence the [data-theme="light"][data-accent] compound
+   overrides below. Indigo needs no block here at all: it's already the
+   @theme default (dark) plus the light-mode override just above. */
+[data-accent="green"] {
+  --color-primary-container: #0c7219;
+  --color-primary: #9cd59b;
+}
+[data-theme="light"][data-accent="green"] {
+  --color-primary: #005f0a;
+}
+
+[data-accent="orange"] {
+  --color-primary-container: #b23f00;
+  --color-primary: #f7b385;
+}
+[data-theme="light"][data-accent="orange"] {
+  --color-primary: #8d2200;
+}
+
+[data-accent="pink"] {
+  --color-primary-container: #c61e54;
+  --color-primary: #fbafba;
+}
+[data-theme="light"][data-accent="pink"] {
+  --color-primary: #9f003a;
 }
 
 @font-face {
@@ -215,5 +309,35 @@ body {
   .animate-dialog-in,
   .animate-backdrop-in {
     animation: none;
+  }
+}
+
+/* Windows High Contrast Mode (forced-colors). Under WHCM the browser
+   replaces almost every author color with a small system palette
+   (Highlight/HighlightText/Canvas/CanvasText/ButtonText/etc.) and drops
+   box-shadow rendering outright — real borders/outlines survive, decorative
+   shadow-based ones don't.
+   The single highest-impact gap this app has: every focus-visible ring
+   across the app (~20 call sites of the shared `focusRing` Tailwind string)
+   is `outline-none` + a box-shadow-based ring, which means WHCM users get
+   *zero* focus indicator anywhere, not a degraded one — confirmed by
+   checking what `focus-visible:ring-*` actually compiles to (box-shadow,
+   not the `outline` property). Restoring a real `outline` here for
+   `:focus-visible` fixes every one of those call sites in one rule, rather
+   than touching 20 files individually.
+   A second, smaller gap: `aria-selected="true"` rows/tiles (EntryTable/
+   EntryGrid) indicate selection purely via background-color — background
+   gets flattened under forced-colors same as everywhere else, so selection
+   would otherwise become invisible; an explicit outline restores it. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
+
+  [aria-selected="true"],
+  [aria-checked="true"] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
   }
 }

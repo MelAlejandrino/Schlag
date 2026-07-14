@@ -383,6 +383,7 @@ export function SearchModal() {
         <div onClick={(e) => e.stopPropagation()}>
           <ContextMenu
             state={{ x: resultMenu.x, y: resultMenu.y, background: false }}
+            onDismiss={() => setResultMenu(null)}
             selectedCount={1}
             selectedIsDir={resultMenu.item.is_dir}
             canPaste={false}

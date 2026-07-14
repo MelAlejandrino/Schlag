@@ -80,7 +80,17 @@ interface FileTypeIconProps {
 export function FileTypeIcon({ name, size, strokeWidth = 1.5, className }: FileTypeIconProps) {
   const url = iconUrl(iconNameFor(name));
   if (url) {
-    return <img src={url} width={size} height={size} alt="" className={`shrink-0 ${className ?? ""}`} />;
+    return (
+      <img
+        src={url}
+        width={size}
+        height={size}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className={`shrink-0 ${className ?? ""}`}
+      />
+    );
   }
   return <File size={size} strokeWidth={strokeWidth} className={className} />;
 }

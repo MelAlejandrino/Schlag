@@ -163,6 +163,7 @@ export function Sidebar({
           <SidebarContextMenu
             x={contextMenu.x}
             y={contextMenu.y}
+            onDismiss={() => setContextMenu(null)}
             isFavorite={favorites.includes(contextMenu.path)}
             onOpen={() => {
               onNavigate(contextMenu.path);

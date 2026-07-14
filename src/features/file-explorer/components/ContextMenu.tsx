@@ -15,10 +15,12 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
+import { useMenuKeyboard } from "../lib/useMenuKeyboard";
 import type { ContextMenuState } from "../file-explorer.types";
 
 interface ContextMenuProps {
   state: ContextMenuState;
+  onDismiss: () => void;
   selectedCount: number;
   selectedIsDir: boolean;
   canPaste: boolean;
@@ -57,6 +59,7 @@ const iconProps = { size: 15, strokeWidth: 1.75 };
 
 export function ContextMenu({
   state,
+  onDismiss,
   selectedCount,
   selectedIsDir,
   canPaste,
@@ -78,6 +81,7 @@ export function ContextMenu({
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: state.y, left: state.x });
+  const menuKeyboard = useMenuKeyboard(menuRef, onDismiss);
 
   // Corrects the position after measuring the menu's actual rendered size,
   // before the browser paints (useLayoutEffect, not useEffect) so there's
@@ -99,28 +103,30 @@ export function ContextMenu({
     return (
       <div
         ref={menuRef}
+        role="menu"
+        onKeyDown={menuKeyboard.onKeyDown}
         className="animate-menu-in fixed z-[70] flex min-w-44 flex-col gap-0.5 rounded-lg border border-surface-container-highest bg-surface-container-high p-1 shadow-lg"
         style={{ top: pos.top, left: pos.left }}
       >
-        <button className={itemClass} onClick={onNewFolder}>
+        <button role="menuitem" className={itemClass} onClick={onNewFolder}>
           <FolderPlus {...iconProps} />
           New Folder
         </button>
-        <button className={itemClass} onClick={onNewFile}>
+        <button role="menuitem" className={itemClass} onClick={onNewFile}>
           <FilePlus {...iconProps} />
           New File
         </button>
         <div className="my-0.5 border-t border-surface-container-highest" />
-        <button className={itemClass} onClick={onPaste} disabled={!canPaste}>
+        <button role="menuitem" className={itemClass} onClick={onPaste} disabled={!canPaste}>
           <ClipboardPaste {...iconProps} />
           Paste
         </button>
         <div className="my-0.5 border-t border-surface-container-highest" />
-        <button className={itemClass} onClick={onToggleFavorite}>
+        <button role="menuitem" className={itemClass} onClick={onToggleFavorite}>
           <Star {...iconProps} fill={isCurrentFavorite ? "currentColor" : "none"} />
           {isCurrentFavorite ? "Remove from Favorites" : "Add to Favorites"}
         </button>
-        <button className={itemClass} onClick={onRefresh}>
+        <button role="menuitem" className={itemClass} onClick={onRefresh}>
           <RotateCw {...iconProps} />
           Refresh
         </button>
@@ -131,44 +137,47 @@ export function ContextMenu({
   return (
     <div
       ref={menuRef}
+      role="menu"
+      onKeyDown={menuKeyboard.onKeyDown}
       className="animate-menu-in fixed z-[70] flex min-w-40 flex-col gap-0.5 rounded-lg border border-surface-container-highest bg-surface-container-high p-1 shadow-lg"
       style={{ top: pos.top, left: pos.left }}
     >
-      <button className={itemClass} onClick={onOpen} disabled={selectedCount !== 1}>
+      <button role="menuitem" className={itemClass} onClick={onOpen} disabled={selectedCount !== 1}>
         <ExternalLink {...iconProps} />
         Open
       </button>
       {onOpenInNewTab && selectedIsDir && (
-        <button className={itemClass} onClick={onOpenInNewTab} disabled={selectedCount !== 1}>
+        <button role="menuitem" className={itemClass} onClick={onOpenInNewTab} disabled={selectedCount !== 1}>
           <SquarePlus {...iconProps} />
           Open in new tab
         </button>
       )}
       {onOpenLocation && (
-        <button className={itemClass} onClick={onOpenLocation} disabled={selectedCount !== 1}>
+        <button role="menuitem" className={itemClass} onClick={onOpenLocation} disabled={selectedCount !== 1}>
           <FolderOpen {...iconProps} />
           Open file location
         </button>
       )}
       {!selectedIsDir && (
-        <button className={itemClass} onClick={onOpenWith} disabled={selectedCount !== 1}>
+        <button role="menuitem" className={itemClass} onClick={onOpenWith} disabled={selectedCount !== 1}>
           <AppWindow {...iconProps} />
           Open with...
         </button>
       )}
-      <button className={itemClass} onClick={onRename} disabled={selectedCount !== 1}>
+      <button role="menuitem" className={itemClass} onClick={onRename} disabled={selectedCount !== 1}>
         <Pencil {...iconProps} />
         Rename
       </button>
-      <button className={itemClass} onClick={onCopy}>
+      <button role="menuitem" className={itemClass} onClick={onCopy}>
         <Copy {...iconProps} />
         Copy
       </button>
-      <button className={itemClass} onClick={onCut}>
+      <button role="menuitem" className={itemClass} onClick={onCut}>
         <Scissors {...iconProps} />
         Cut
       </button>
       <button
+        role="menuitem"
         className={`flex items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-[13px] text-on-surface transition-colors duration-150 hover:bg-error-container hover:text-on-error-container ${focusRing}`}
         onClick={onDelete}
       >
@@ -176,7 +185,7 @@ export function ContextMenu({
         Delete{selectedCount > 1 ? ` (${selectedCount})` : ""}
       </button>
       <div className="my-0.5 border-t border-surface-container-highest" />
-      <button className={itemClass} onClick={onProperties} disabled={selectedCount !== 1}>
+      <button role="menuitem" className={itemClass} onClick={onProperties} disabled={selectedCount !== 1}>
         <Info {...iconProps} />
         Properties
       </button>

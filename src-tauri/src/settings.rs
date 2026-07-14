@@ -4,6 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// Newtype around the `settings.json` path, managed as Tauri state.
+/// Tauri's state container is keyed by type, not variable name — a bare
+/// `PathBuf` here would collide with the app data dir (also a `PathBuf`)
+/// already managed in `lib.rs`'s `setup()`, silently keeping whichever was
+/// managed first and making `update_settings` write JSON into a directory
+/// instead of the settings file. Confirmed live: this is exactly what was
+/// happening, silently failing (caught by the frontend's own `catch`) with
+/// no settings.json ever created.
+pub struct SettingsPath(pub PathBuf);
+
 /// App-level settings persisted as JSON at `{app_data_dir}/settings.json`.
 /// Frontend-only preferences (sort, view mode, etc.) live in Zustand's
 /// localStorage persist — this struct only covers settings that need the
@@ -16,6 +26,13 @@ pub struct AppSettings {
     /// Each entry is a case-insensitive directory name (not a path), matching
     /// the same convention as the built-in lists.
     pub excluded_dirs: Vec<String>,
+
+    /// User-added full folder paths to exclude from indexing — unlike
+    /// `excluded_dirs` (matches a name anywhere), this excludes one specific
+    /// location regardless of its name. Each entry is a case-insensitive
+    /// absolute path (e.g. `D:\Downloads\ISOs`); matched exactly or as an
+    /// ancestor of a scanned path — see `indexer.rs`'s `is_excluded_path`.
+    pub excluded_paths: Vec<String>,
 }
 
 /// Load settings from disk, falling back to defaults if the file doesn't
@@ -50,8 +67,9 @@ pub fn save_settings(path: &Path, settings: &AppSettings) -> Result<(), String> 
 
 /// Returns the current settings to the frontend.
 #[tauri::command]
-pub fn get_settings(settings: tauri::State<'_, AppSettings>) -> AppSettings {
-    settings.inner().clone()
+pub fn get_settings(settings: tauri::State<'_, Mutex<AppSettings>>) -> Result<AppSettings, String> {
+    let guard = settings.lock().map_err(|e| format!("Lock error: {e}"))?;
+    Ok(guard.clone())
 }
 
 /// Storage usage information displayed in the Settings page.
@@ -120,10 +138,10 @@ pub fn get_storage_info(
 #[tauri::command]
 pub fn update_settings(
     new_settings: AppSettings,
-    settings_path: tauri::State<'_, PathBuf>,
+    settings_path: tauri::State<'_, SettingsPath>,
     settings: tauri::State<'_, std::sync::Mutex<AppSettings>>,
 ) -> Result<AppSettings, String> {
-    save_settings(&settings_path, &new_settings)?;
+    save_settings(&settings_path.0, &new_settings)?;
     let mut guard = settings.lock().map_err(|e| format!("Lock error: {e}"))?;
     *guard = new_settings.clone();
     Ok(new_settings)

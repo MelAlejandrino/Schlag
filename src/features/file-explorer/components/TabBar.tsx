@@ -129,6 +129,7 @@ export function TabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab, o
           <TabContextMenu
             x={contextMenu.x}
             y={contextMenu.y}
+            onDismiss={() => setContextMenu(null)}
             canClose={tabs.length > 1}
             onClose={() => {
               onCloseTab(contextMenu.tabId);
@@ -235,7 +236,7 @@ function TabItem({ tab, active, onSwitchTab, onCloseTab, onDrop, onTabDragStart,
         dropTarget.onDrop(e);
       }}
       title={tab.currentPath === tabLabel(tab.currentPath) ? undefined : tab.currentPath}
-      className={`group flex max-w-56 min-w-32 shrink-0 cursor-default items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-[13px] transition-colors duration-150 ${focusRing} ${
+      className={`group flex max-w-56 min-w-32 shrink-0 cursor-default items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-[13px] transition-colors duration-150 select-none ${focusRing} ${
         dropTarget.isOver
           ? "border-primary-container bg-surface-container-high text-primary"
           : active

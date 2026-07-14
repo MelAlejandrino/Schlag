@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, type DragEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, type DragEvent } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronUp, Folder } from "lucide-react";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
 import { formatDate, formatSize } from "../lib/format";
@@ -48,7 +49,14 @@ interface EntryTableProps {
   onPreview?: () => void;
 }
 
-const headerClass = "sticky top-0 bg-surface px-3 py-2 text-left font-mono text-[11px] tracking-wide text-outline uppercase";
+// Shared between the header and every virtualized row so columns stay
+// aligned — replaces the old <table>/<colgroup> widths 1:1. A native <tr>
+// can't be individually absolutely-positioned for virtualization (its
+// display type blockifies and it loses table-cell alignment entirely), the
+// same reason EntryGrid's tile rows are plain divs, not a CSS grid/table —
+// so this is a div-based "fake table" using CSS Grid to keep the visual
+// result identical.
+const GRID_TEMPLATE_COLUMNS = "55% 20% 12% 13%";
 
 const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
   { key: "name", label: "Name" },
@@ -56,6 +64,16 @@ const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
   { key: "type", label: "Type" },
   { key: "size", label: "Size", align: "right" },
 ];
+
+// Generous fixed estimate — corrected against the real measured height via
+// measureElement below (a long filename can wrap to more than one line, so
+// row height isn't actually uniform). Skipping measureElement here would
+// reproduce the exact scrollbar-thumb bug already documented for EntryGrid
+// (CLAUDE.md's own "Non-obvious gotchas" entry) — same fix, same reason.
+const HEADER_ROW_SIZE = 33;
+const ENTRY_ROW_SIZE = 33;
+
+type Row = { kind: "header"; label: string } | { kind: "entry"; entry: Entry };
 
 interface SortableHeaderProps {
   column: (typeof COLUMNS)[number];
@@ -69,7 +87,12 @@ interface SortableHeaderProps {
 // the SearchModal redesign, not just an icon-only sort affordance.
 function SortableHeader({ column, active, direction, onClick }: SortableHeaderProps) {
   return (
-    <th className={`${headerClass} ${column.align === "right" ? "text-right" : ""}`}>
+    <div
+      role="columnheader"
+      className={`px-3 py-2 text-left font-mono text-[11px] tracking-wide text-outline uppercase ${
+        column.align === "right" ? "text-right" : ""
+      }`}
+    >
       <button
         type="button"
         onClick={onClick}
@@ -85,7 +108,7 @@ function SortableHeader({ column, active, direction, onClick }: SortableHeaderPr
             <ChevronDown size={11} strokeWidth={2} />
           ))}
       </button>
-    </th>
+    </div>
   );
 }
 
@@ -117,13 +140,48 @@ export function EntryTable({
 }: EntryTableProps) {
   // Targets the folder being browsed itself — dropping anywhere that isn't
   // a specific row (a row's own drop target, see EntryRow, stops
-  // propagation so this doesn't also fire underneath it) moves/copies into
+  // propagation so this doesn't also fire) moves/copies into
   // the current folder, same as real Explorer's own background-drop.
   const backgroundDrop = useDropTarget(currentPath, onDrop);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Arrow-key navigation, Enter-to-open, type-ahead jump-to-file.
+  const rows: Row[] = useMemo(
+    () =>
+      toDisplayItems(entries, groupBy).map((item) =>
+        item.kind === "header" ? { kind: "header", label: item.label } : { kind: "entry", entry: item.entry },
+      ),
+    [entries, groupBy],
+  );
+
+  // Vertical virtualization — same rationale and mechanics as EntryGrid:
+  // real virtualization (unmounting off-screen rows) is what actually
+  // bounds render/re-render cost in a directory with tens of thousands of
+  // files, not just a visual nicety. measureElement corrects the fixed
+  // estimate against real rendered height (a wrapped long filename is
+  // taller than one line) so getTotalSize()/the scrollbar thumb stays
+  // accurate instead of drifting as new rows scroll into view.
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => (rows[i].kind === "header" ? HEADER_ROW_SIZE : ENTRY_ROW_SIZE),
+    overscan: 8,
+    measureElement: (el) => el.getBoundingClientRect().height,
+  });
+
+  // Virtualizer-aware scroll-by-path — the hook's default scrollIntoView
+  // can't reach an off-screen (unmounted) virtualized row.
+  const scrollToEntryRef = useRef<((path: string) => void) | null>(null);
+  scrollToEntryRef.current = (path: string) => {
+    const rowIndex = rows.findIndex((r) => r.kind === "entry" && r.entry.path === path);
+    if (rowIndex !== -1) virtualizer.scrollToIndex(rowIndex, { align: "auto" });
+  };
+
+  // Arrow-key navigation, Enter-to-open, type-ahead jump-to-file. No
+  // `gridRows` needed here (unlike EntryGrid) — EntryTable is always a
+  // single column, so `entries[idx±1]` is already the correct next/prev
+  // entry regardless of which display rows have group headers interspersed;
+  // scrollToEntryRef is what finds the right *visual* row to scroll to.
   const entryKeyboard = useEntryKeyboard({
     entries,
     selectedPaths,
@@ -133,7 +191,9 @@ export function EntryTable({
     onDelete,
     onRename,
     scrollRef,
+    scrollToEntryRef,
     onPreview,
+    onContextMenu,
   });
 
   // Wrap onSelect to synchronously update the keyboard focus index when
@@ -149,18 +209,18 @@ export function EntryTable({
     [entries, onSelect, entryKeyboard],
   );
 
-  // Scroll the reveal target into view once it's in the rendered listing
-  // (from "Open file location"). The matching row carries data-reveal, so
-  // this finds it without escaping backslash-laden Windows paths into a
-  // querySelector. block: "center" puts it comfortably mid-view rather than
-  // flush against the top edge under the sticky header. Cleared immediately
-  // so it never re-fires on an unrelated re-render.
+  // Scroll the reveal target into view (from "Open file location"). Unlike
+  // the old plain-DOM approach, the target row may not be mounted at all
+  // (virtualized) — the virtualizer's own scrollToIndex is what actually
+  // brings an off-screen row on-screen, same as EntryGrid. Cleared
+  // immediately so it fires once.
   useEffect(() => {
     if (!revealPath) return;
-    scrollRef.current?.querySelector('[data-reveal="true"]')?.scrollIntoView({ block: "center" });
+    const rowIndex = rows.findIndex((r) => r.kind === "entry" && r.entry.path === revealPath);
+    if (rowIndex !== -1) virtualizer.scrollToIndex(rowIndex, { align: "center" });
     onRevealed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealPath, entries]);
+  }, [revealPath, rows]);
 
   if (entries.length === 0) {
     return (
@@ -180,7 +240,6 @@ export function EntryTable({
         onDragLeave={backgroundDrop.onDragLeave}
         onDrop={backgroundDrop.onDrop}
       >
-
         <Folder size={28} strokeWidth={1.5} className="text-outline" />
         <p className="text-sm text-on-surface-variant">{emptyTitle}</p>
         <p className="text-xs text-outline">{emptySubtitle}</p>
@@ -188,14 +247,14 @@ export function EntryTable({
     );
   }
 
-  const items = toDisplayItems(entries, groupBy);
-
   return (
     <div
       ref={scrollRef}
       tabIndex={0}
+      role="grid"
+      aria-multiselectable="true"
       onKeyDown={entryKeyboard.onKeyDown}
-      className={`themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto transition-colors duration-150 outline-none ${
+      className={`themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto pb-24 transition-colors duration-150 outline-none ${
         backgroundDrop.isOver ? "bg-surface-container-low" : ""
       }`}
       onClick={(e) => {
@@ -210,81 +269,70 @@ export function EntryTable({
       onDragLeave={backgroundDrop.onDragLeave}
       onDrop={backgroundDrop.onDrop}
     >
-      <table className="w-full table-fixed border-collapse">
-        <colgroup>
-          <col className="w-[55%]" />
-          <col className="w-[20%]" />
-          <col className="w-[12%]" />
-          <col className="w-[13%]" />
-        </colgroup>
-        <thead>
-          <tr>
-            {COLUMNS.map((column) => (
-              <SortableHeader
-                key={column.key}
-                column={column}
-                active={sortKey === column.key}
-                direction={sortDirection}
-                onClick={() => onSortColumnClick(column.key)}
-              />
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item, index) =>
-            item.kind === "header" ? (
-              // A group header is a label, not a real entry — right-clicking
-              // it should act like empty space (the background menu), not
-              // silently do nothing.
-              <tr
-                key={`group-${item.label}-${index}`}
-                onClick={() => onClearSelection()}
-                onContextMenu={(e) => {
-                  if (!onBackgroundContextMenu) return;
-                  e.preventDefault();
-                  onBackgroundContextMenu(e.clientX, e.clientY);
-                }}
-              >
-                <td colSpan={COLUMNS.length} className="bg-surface px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-outline">
-                  {item.label}
-                </td>
-              </tr>
-            ) : (
-              <EntryRow
-                key={item.entry.path}
-                entry={item.entry}
-                selected={selectedPaths.includes(item.entry.path)}
-                cut={cutPaths.includes(item.entry.path)}
-                reveal={item.entry.path === revealPath}
-                onOpen={onOpen}
-                onSelect={handleSelect}
-                onContextMenu={onContextMenu}
-                onDragPaths={onDragPaths}
-                onDrop={onDrop}
-              />
-            ),
-          )}
-        </tbody>
-      </table>
-      {/* Always-clickable trailing empty space below the last row — without
-          this, a folder whose contents exactly fill (or overflow) the view
-          leaves no background left to right-click for the New Folder/
-          New File/Paste/Refresh menu. Uses a fixed min-height instead of
-          flex-1, because flex-1 inside a scrollable flex-col behaves
-          inconsistently: it grows when there's room (no scroll), then
-          collapses to zero once the content overflows and the container
-          starts scrolling — causing the scrollbar thumb to change size
-          as you scroll. A fixed min-height always contributes the same
-          amount to the scrollable area. */}
       <div
-        className="min-h-24"
-        onClick={() => onClearSelection()}
-        onContextMenu={(e) => {
-          if (!onBackgroundContextMenu) return;
-          e.preventDefault();
-          onBackgroundContextMenu(e.clientX, e.clientY);
-        }}
-      />
+        role="row"
+        className="sticky top-0 z-10 grid border-b border-surface-container bg-surface"
+        style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS }}
+      >
+        {COLUMNS.map((column) => (
+          <SortableHeader
+            key={column.key}
+            column={column}
+            active={sortKey === column.key}
+            direction={sortDirection}
+            onClick={() => onSortColumnClick(column.key)}
+          />
+        ))}
+      </div>
+
+      <div style={{ position: "relative", width: "100%", height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const row = rows[virtualRow.index];
+          return (
+            <div
+              key={virtualRow.key}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              {row.kind === "header" ? (
+                // A group header is a label, not a real entry — right-clicking
+                // it should act like empty space (the background menu), not
+                // silently do nothing.
+                <div
+                  className="bg-surface px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-outline"
+                  onClick={() => onClearSelection()}
+                  onContextMenu={(e) => {
+                    if (!onBackgroundContextMenu) return;
+                    e.preventDefault();
+                    onBackgroundContextMenu(e.clientX, e.clientY);
+                  }}
+                >
+                  {row.label}
+                </div>
+              ) : (
+                <EntryRow
+                  entry={row.entry}
+                  selected={selectedPaths.includes(row.entry.path)}
+                  cut={cutPaths.includes(row.entry.path)}
+                  reveal={row.entry.path === revealPath}
+                  onOpen={onOpen}
+                  onSelect={handleSelect}
+                  onContextMenu={onContextMenu}
+                  onDragPaths={onDragPaths}
+                  onDrop={onDrop}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -301,29 +349,41 @@ interface EntryRowProps {
   onDrop: (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
 }
 
-function EntryRow({ entry, selected, cut, reveal, onOpen, onSelect, onContextMenu, onDragPaths, onDrop }: EntryRowProps) {
+const EntryRow = memo(function EntryRow({
+  entry,
+  selected,
+  cut,
+  reveal,
+  onOpen,
+  onSelect,
+  onContextMenu,
+  onDragPaths,
+  onDrop,
+}: EntryRowProps) {
   const dropTarget = useDropTarget(entry.path, onDrop);
   // Stops propagation so a drop that lands on this specific folder row
   // doesn't also bubble up and re-trigger the table's own background drop
-  // (which targets the currently browsed folder, not this row's folder).
+  // (both would otherwise fire for the same drop).
   const dropProps = entry.is_dir
     ? {
-        onDragOver: (e: DragEvent<HTMLTableRowElement>) => {
+        onDragOver: (e: DragEvent<HTMLDivElement>) => {
           dropTarget.onDragOver(e);
           e.stopPropagation();
         },
         onDragLeave: dropTarget.onDragLeave,
-        onDrop: (e: DragEvent<HTMLTableRowElement>) => {
+        onDrop: (e: DragEvent<HTMLDivElement>) => {
           dropTarget.onDrop(e);
           e.stopPropagation();
         },
       }
     : {};
   return (
-    <tr
-      draggable
+    <div
+      role="row"
+      aria-selected={selected}
       data-reveal={reveal ? "true" : undefined}
       data-entry-path={entry.path}
+      draggable
       onDragStart={(e) => startDrag(e, onDragPaths(entry))}
       onClick={(e) => onSelect(entry, e)}
       onDoubleClick={() => onOpen(entry)}
@@ -332,13 +392,14 @@ function EntryRow({ entry, selected, cut, reveal, onOpen, onSelect, onContextMen
         onContextMenu(entry, e.clientX, e.clientY);
       }}
       {...dropProps}
-      className={`select-none border-b border-surface-container transition-colors duration-150 hover:bg-surface-container ${
+      className={`grid select-none border-b border-surface-container transition-colors duration-150 hover:bg-surface-container ${
         selected ? "bg-surface-container-high" : ""
       } ${cut ? "opacity-50" : ""} ${
         entry.is_dir && dropTarget.isOver ? "outline-2 -outline-offset-2 outline-primary-container" : ""
       }`}
+      style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS }}
     >
-      <td className="px-3 py-1.5 text-[13px]">
+      <div role="gridcell" className="px-3 py-1.5 text-[13px]">
         <span className={`flex items-start gap-2 ${selected ? "text-primary" : "text-on-surface"}`}>
           {entry.is_dir ? (
             <Folder size={15} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" />
@@ -347,12 +408,16 @@ function EntryRow({ entry, selected, cut, reveal, onOpen, onSelect, onContextMen
           )}
           <span className="min-w-0 break-words">{entry.name}</span>
         </span>
-      </td>
-      <td className="px-3 py-1.5 font-mono text-[12px] text-on-surface-variant">{formatDate(entry.modified_ms)}</td>
-      <td className="px-3 py-1.5 font-mono text-[12px] text-on-surface-variant">{entryTypeLabel(entry)}</td>
-      <td className="px-3 py-1.5 text-right font-mono text-[12px] text-on-surface-variant">
+      </div>
+      <div role="gridcell" className="px-3 py-1.5 font-mono text-[12px] text-on-surface-variant">
+        {formatDate(entry.modified_ms)}
+      </div>
+      <div role="gridcell" className="px-3 py-1.5 font-mono text-[12px] text-on-surface-variant">
+        {entryTypeLabel(entry)}
+      </div>
+      <div role="gridcell" className="px-3 py-1.5 text-right font-mono text-[12px] text-on-surface-variant">
         {formatSize(entry.size, entry.is_dir)}
-      </td>
-    </tr>
+      </div>
+    </div>
   );
-}
+});

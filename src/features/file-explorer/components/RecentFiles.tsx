@@ -79,6 +79,7 @@ export function RecentFiles({ className = "" }: { className?: string }) {
         <div onClick={(e) => e.stopPropagation()}>
           <ContextMenu
             state={{ x: rowMenu.x, y: rowMenu.y, background: false }}
+            onDismiss={() => setRowMenu(null)}
             selectedCount={1}
             selectedIsDir={false}
             canPaste={false}

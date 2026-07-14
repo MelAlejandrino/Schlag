@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { fileExplorerService } from "./services/file-explorer.service";
 import { useFileExplorerStore } from "./store/file-explorer.store";
 import { basename, dirname, joinPath } from "./lib/path";
@@ -24,13 +24,21 @@ export function useFileExplorer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function openEntry(entry: Entry) {
+  // Stable identity (useCallback + getState(), not the reactive `store`
+  // variable) — this is one of the handlers EntryTable/EntryGrid pass all
+  // the way down to EntryRow/EntryTile, which are React.memo'd specifically
+  // so a selection change doesn't re-render every row. useFileExplorerStore()
+  // (no selector, above) re-renders this whole hook on every store change,
+  // so a plain function here would get a fresh identity every render and
+  // silently defeat that memoization — confirmed while verifying the
+  // Performance pass actually helps, not just looks like it does.
+  const openEntry = useCallback((entry: Entry) => {
     if (entry.is_dir) {
-      store.navigate(entry.path);
+      useFileExplorerStore.getState().navigate(entry.path);
     } else {
       fileExplorerService.openFile(entry.path).catch((e) => useFileExplorerStore.setState({ error: String(e) }));
     }
-  }
+  }, []);
 
   function openSelected() {
     if (selectedEntries.length === 1) openEntry(selectedEntries[0]);
@@ -114,26 +122,39 @@ export function useFileExplorer() {
     openInNewTab(selectedEntries[0]);
   }
 
-  function selectEntry(entry: Entry, mods: SelectModifiers) {
-    if (mods.shiftKey) store.selectRange(entry.path);
-    else if (mods.ctrlKey || mods.metaKey) store.toggleSelect(entry.path);
-    else store.selectOnly(entry.path);
-  }
+  // Stable identity — see openEntry's comment above for why (this is
+  // EntryTable/EntryGrid's onSelect, also passed straight to EntryRow/
+  // EntryTile).
+  const selectEntry = useCallback((entry: Entry, mods: SelectModifiers) => {
+    const s = useFileExplorerStore.getState();
+    if (mods.shiftKey) s.selectRange(entry.path);
+    else if (mods.ctrlKey || mods.metaKey) s.toggleSelect(entry.path);
+    else s.selectOnly(entry.path);
+  }, []);
 
-  function openContextMenuForEntry(entry: Entry, x: number, y: number) {
-    store.ensureSelected(entry.path);
-    store.openContextMenu(x, y);
-  }
+  // Stable identity — see openEntry's comment above (EntryTable/EntryGrid's
+  // onContextMenu).
+  const openContextMenuForEntry = useCallback((entry: Entry, x: number, y: number) => {
+    const s = useFileExplorerStore.getState();
+    s.ensureSelected(entry.path);
+    s.openContextMenu(x, y);
+  }, []);
 
-  // Dragging a selected entry drags the whole selection; dragging an
-  // unselected one drags just itself (and becomes the new selection).
-  function getDragPaths(entry: Entry): string[] {
-    if (store.selectedPaths.includes(entry.path) && store.selectedPaths.length > 1) {
-      return store.selectedPaths;
+  // Stable identity — see openEntry's comment above (EntryTable/EntryGrid's
+  // onDragPaths). Dragging a selected entry drags the whole selection;
+  // dragging an unselected one drags just itself (and becomes the new
+  // selection). Reads selectedPaths via getState() rather than the closure,
+  // same reason as everywhere else in this block — a stale captured
+  // selectedPaths would make this decide based on whatever was selected
+  // when the component last mounted, not what's actually selected now.
+  const getDragPaths = useCallback((entry: Entry): string[] => {
+    const s = useFileExplorerStore.getState();
+    if (s.selectedPaths.includes(entry.path) && s.selectedPaths.length > 1) {
+      return s.selectedPaths;
     }
-    store.selectOnly(entry.path);
+    s.selectOnly(entry.path);
     return [entry.path];
-  }
+  }, []);
 
   async function dropOnto(sourcePaths: string[], targetPath: string, isCopy: boolean) {
     // This PC has no real folder to move/copy into — guarded here rather

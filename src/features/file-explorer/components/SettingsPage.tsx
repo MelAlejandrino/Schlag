@@ -10,7 +10,12 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import { useSettingsStore, type SettingsSection, type StartupBehavior } from "../store/settings.store";
+import {
+  useSettingsStore,
+  type Accent,
+  type SettingsSection,
+  type StartupBehavior,
+} from "../store/settings.store";
 import type { SortKey } from "../lib/sortEntries";
 import type { GroupBy } from "../lib/groupEntries";
 import type { ViewMode } from "../store/file-explorer.store";
@@ -237,7 +242,19 @@ function AboutSection() {
 
 // ─── Appearance ───────────────────────────────────────────────────
 
+// Swatch preview colors match the actual --color-primary-container value
+// each accent applies (App.css) — the dot shows exactly what picking it
+// does, not a stand-in mockup color.
+const ACCENT_SWATCHES: { value: Accent; color: string; label: string }[] = [
+  { value: "indigo", color: "#5856d6", label: "Cyber Indigo" },
+  { value: "green", color: "#0c7219", label: "Green" },
+  { value: "orange", color: "#b23f00", label: "Orange" },
+  { value: "pink", color: "#c61e54", label: "Pink" },
+];
+
 function AppearanceSection() {
+  const store = useSettingsStore();
+
   return (
     <div className="flex max-w-xl flex-col gap-6">
       <div>
@@ -247,38 +264,31 @@ function AppearanceSection() {
         </p>
       </div>
 
-      <Section title="Theme" description="Schlag currently uses a dark theme only. Light theme is coming in a future update.">
+      <Section title="Theme">
         <SegmentToggle
-          value="dark"
-          onChange={() => {}}
+          value={store.theme}
+          onChange={store.setTheme}
           options={[
             { label: "Dark", value: "dark" as const },
-            { label: "Light (coming soon)", value: "light" as const },
+            { label: "Light", value: "light" as const },
           ]}
         />
       </Section>
 
       <hr className="border-surface-container-highest" />
 
-      <Section title="Accent Color" description="Custom accent colors are coming in a future update.">
+      <Section title="Accent Color">
         <div className="flex gap-2">
-          {[
-            { color: "#5856d6", label: "Cyber Indigo" },
-            { color: "#4caf50", label: "Green" },
-            { color: "#ff9800", label: "Orange" },
-            { color: "#e91e63", label: "Pink" },
-          ].map((c) => (
+          {ACCENT_SWATCHES.map((c) => (
             <button
-              key={c.color}
+              key={c.value}
               type="button"
               title={c.label}
+              onClick={() => store.setAccent(c.value)}
               className={`h-7 w-7 rounded-full border-2 transition-all duration-150 ${focusRing} ${
-                c.color === "#5856d6"
-                  ? "border-on-surface scale-110"
-                  : "border-transparent opacity-40"
+                store.accent === c.value ? "border-on-surface scale-110" : "border-transparent opacity-40"
               }`}
               style={{ backgroundColor: c.color }}
-              disabled={c.color !== "#5856d6"}
             />
           ))}
         </div>
@@ -399,19 +409,141 @@ function GeneralSection() {
 
 const BUILTIN_DIRS = ["node_modules", ".git", ".cache", "AppData", "target", ".cargo", ".npm", ".ssh"];
 
+// is_excluded (indexer.rs) matches a single path component by name — a
+// value containing a path separator can never match a real entry, so it
+// would silently exclude nothing. Same reserved-character convention as
+// promptConfig.ts's validateFilename, checked here instead of imported
+// since this is a different concern (exclusion input, not a file/folder name).
+const PATH_SEPARATOR = /[/\\]/;
+
+// The inverse mistake for the path field below: a value with no drive
+// prefix (a bare name, or a relative fragment) can never equal or prefix a
+// real absolute path in is_excluded_path (indexer.rs), so it would silently
+// exclude nothing — same "catch the silent no-op before it's saved" reasoning
+// as PATH_SEPARATOR above. Windows-only app, so a drive-letter prefix is a
+// reasonable absolute-path check (matches fs_ops.rs's own drive assumptions).
+const ABSOLUTE_PATH = /^[a-zA-Z]:[\\/]/;
+
+/** Quiet sub-heading inside a Section — sans, smaller, dimmer than the
+ * Section's own mono uppercase title, so "Built-in" / "Custom" read as a
+ * second tier under it rather than a competing heading. */
+function SubLabel({ children }: { children: React.ReactNode }) {
+  return <span className="text-[10px] font-medium text-outline-variant">{children}</span>;
+}
+
+/** A removable chip — matches the read-only built-in chip's shape but in
+ * the primary tint, signaling "this one's yours." `wide` switches from a
+ * wrapped inline chip (short names) to a full-width row (long paths, which
+ * need to truncate instead of wrap). */
+function RemovableChip({
+  children,
+  onRemove,
+  wide,
+}: {
+  children: React.ReactNode;
+  onRemove: () => void;
+  wide?: boolean;
+}) {
+  return (
+    <span
+      className={`flex items-center gap-1 rounded-sm border border-primary-container/40 bg-primary-container/10 font-mono text-[11px] text-primary ${
+        wide ? "justify-between px-2 py-1" : "px-2 py-0.5"
+      }`}
+    >
+      <span className={wide ? "truncate" : undefined}>{children}</span>
+      <button
+        type="button"
+        className="shrink-0 rounded p-0.5 transition-colors hover:bg-error-container hover:text-on-error-container"
+        onClick={onRemove}
+      >
+        <X size={10} strokeWidth={2} />
+      </button>
+    </span>
+  );
+}
+
+/** The shared "type a value, press Add" row + its inline validation error —
+ * identical shape for both the directory-name and full-path fields below,
+ * so the two exclusion mechanisms read as one consistent affordance. */
+function AddRow({
+  value,
+  onChange,
+  onKeyDown,
+  onAdd,
+  placeholder,
+  error,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown: (e: KeyboardEvent) => void;
+  onAdd: () => void;
+  placeholder: string;
+  error: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-surface-container-highest pt-3">
+      <div className="flex gap-2">
+        <input
+          className={`flex-1 ${fieldClass}`}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          onKeyDown={onKeyDown}
+        />
+        <button
+          type="button"
+          className={`flex shrink-0 items-center gap-1 rounded border border-surface-container-highest bg-surface-container px-2.5 py-1 text-[11px] text-on-surface transition-colors duration-150 hover:border-primary-container ${focusRing}`}
+          onClick={onAdd}
+        >
+          <Plus size={12} strokeWidth={2} />
+          Add
+        </button>
+      </div>
+      {error && <p className="text-[11px] text-error">{error}</p>}
+    </div>
+  );
+}
+
 function IndexingSection() {
   const store = useSettingsStore();
   const [newDir, setNewDir] = useState("");
+  const [dirError, setDirError] = useState("");
+  const [newPath, setNewPath] = useState("");
+  const [pathError, setPathError] = useState("");
 
   function handleAddDir() {
-    store.addExcludedDir(newDir);
+    const trimmed = newDir.trim();
+    if (PATH_SEPARATOR.test(trimmed)) {
+      setDirError("Enter a directory name only, not a path (e.g. .venv, not C:\\foo\\.venv).");
+      return;
+    }
+    store.addExcludedDir(trimmed);
     setNewDir("");
+    setDirError("");
   }
 
-  function handleKeyDown(e: KeyboardEvent) {
+  function handleDirKeyDown(e: KeyboardEvent) {
     if (e.key === "Enter") {
       e.preventDefault();
       handleAddDir();
+    }
+  }
+
+  function handleAddPath() {
+    const trimmed = newPath.trim();
+    if (!ABSOLUTE_PATH.test(trimmed)) {
+      setPathError("Enter a full path, e.g. D:\\Downloads\\ISOs.");
+      return;
+    }
+    store.addExcludedPath(trimmed);
+    setNewPath("");
+    setPathError("");
+  }
+
+  function handlePathKeyDown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleAddPath();
     }
   }
 
@@ -428,58 +560,82 @@ function IndexingSection() {
         title="Excluded Directories"
         description="Directory names to exclude from indexing, on top of the built-in list. Changes take effect on next app restart."
       >
-        {/* Built-in exclusions (read-only) */}
-        <div className="flex flex-wrap gap-1.5">
-          {BUILTIN_DIRS.map((name) => (
-            <span
-              key={name}
-              className="rounded-sm border border-surface-container-highest bg-surface-container px-2 py-0.5 font-mono text-[11px] text-outline-variant"
-            >
-              {name}
-            </span>
-          ))}
-          <span className="flex items-center px-1 font-mono text-[11px] text-outline">(built-in)</span>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <SubLabel>Built-in</SubLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {BUILTIN_DIRS.map((name) => (
+                <span
+                  key={name}
+                  className="rounded-sm border border-surface-container-highest bg-surface-container px-2 py-0.5 font-mono text-[11px] text-outline-variant"
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <SubLabel>Custom</SubLabel>
+            {store.excludedDirs.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {store.excludedDirs.map((name) => (
+                  <RemovableChip key={name} onRemove={() => store.removeExcludedDir(name)}>
+                    {name}
+                  </RemovableChip>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-outline">Nothing added yet — add a name below.</p>
+            )}
+          </div>
         </div>
 
-        {/* User-added exclusions */}
-        {store.excludedDirs.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {store.excludedDirs.map((name) => (
-              <span
-                key={name}
-                className="flex items-center gap-1 rounded-sm border border-primary-container/40 bg-primary-container/10 px-2 py-0.5 font-mono text-[11px] text-primary"
-              >
-                {name}
-                <button
-                  type="button"
-                  className="rounded p-0.5 transition-colors hover:bg-error-container hover:text-on-error-container"
-                  onClick={() => store.removeExcludedDir(name)}
-                >
-                  <X size={10} strokeWidth={2} />
-                </button>
-              </span>
+        <AddRow
+          value={newDir}
+          onChange={(v) => {
+            setNewDir(v);
+            if (dirError) setDirError("");
+          }}
+          onKeyDown={handleDirKeyDown}
+          onAdd={handleAddDir}
+          placeholder="directory name (e.g. .venv)"
+          error={dirError}
+        />
+      </Section>
+
+      <hr className="border-surface-container-highest" />
+
+      <Section
+        title="Excluded Paths"
+        description="Specific folder locations to exclude from indexing, regardless of name. Changes take effect on next app restart."
+      >
+        {store.excludedPaths.length > 0 ? (
+          <div className="themed-scroll flex max-h-40 flex-col gap-1.5 overflow-y-auto pr-1">
+            {store.excludedPaths.map((path) => (
+              <RemovableChip key={path} onRemove={() => store.removeExcludedPath(path)} wide>
+                {path}
+              </RemovableChip>
             ))}
           </div>
+        ) : (
+          <p className="text-[11px] text-outline">
+            No folders excluded by path yet — useful for skipping one specific location without
+            excluding every folder that happens to share its name.
+          </p>
         )}
 
-        {/* Add new */}
-        <div className="flex gap-2">
-          <input
-            className={`flex-1 ${fieldClass}`}
-            placeholder="directory name (e.g. .venv)"
-            value={newDir}
-            onChange={(e) => setNewDir(e.currentTarget.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button
-            type="button"
-            className={`flex shrink-0 items-center gap-1 rounded border border-surface-container-highest bg-surface-container px-2.5 py-1 text-[11px] text-on-surface transition-colors duration-150 hover:border-primary-container ${focusRing}`}
-            onClick={handleAddDir}
-          >
-            <Plus size={12} strokeWidth={2} />
-            Add
-          </button>
-        </div>
+        <AddRow
+          value={newPath}
+          onChange={(v) => {
+            setNewPath(v);
+            if (pathError) setPathError("");
+          }}
+          onKeyDown={handlePathKeyDown}
+          onAdd={handleAddPath}
+          placeholder="full path (e.g. D:\\Downloads\\ISOs)"
+          error={pathError}
+        />
       </Section>
     </div>
   );

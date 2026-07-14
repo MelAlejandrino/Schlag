@@ -74,6 +74,7 @@ export interface ArchiveEntry {
 // Backend settings persisted as JSON at {app_data_dir}/settings.json.
 export interface AppSettings {
   excluded_dirs: string[];
+  excluded_paths: string[];
 }
 
 // Storage usage info from the backend.

@@ -33,6 +33,12 @@ interface EntryKeyboardOptions {
   gridRows?: GridRow[];
   // Spacebar handler — toggles the preview pane.
   onPreview?: () => void;
+  // Shift+F10 / the keyboard "Menu" key — opens the same context menu a
+  // right-click would, at the focused entry's own position. Without this,
+  // "Open with…", "Properties", "Open in new tab", and "Open file location"
+  // were unreachable without a mouse (confirmed by audit — right-click was
+  // the only trigger anywhere in the app).
+  onContextMenu?: (entry: Entry, x: number, y: number) => void;
 }
 
 export function useEntryKeyboard({
@@ -48,6 +54,7 @@ export function useEntryKeyboard({
   scrollToEntryRef,
   gridRows,
   onPreview,
+  onContextMenu,
 }: EntryKeyboardOptions) {
   const typeaheadRef = useRef("");
   const typeaheadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,6 +75,8 @@ export function useEntryKeyboard({
   gridRowsRef.current = gridRows;
   const onPreviewRef = useRef(onPreview);
   onPreviewRef.current = onPreview;
+  const onContextMenuRef = useRef(onContextMenu);
+  onContextMenuRef.current = onContextMenu;
 
   // Keep focusedRef in sync with the actual selection — when the user
   // clicks a row (or a programmatic selectOnly lands), update the ref
@@ -220,6 +229,24 @@ export function useEntryKeyboard({
     [onSelectOnly, scrollTo],
   );
 
+  // Opens the same context menu a right-click would, positioned at the
+  // focused entry's own row — the keyboard equivalent of a right-click
+  // (Shift+F10 / the "Menu" key, matching every native Windows app). The
+  // focused row is assumed to already be scrolled into view (the same
+  // scrollTo() every other navigation action already calls), so it's
+  // safe to look it up in the DOM even in a virtualized list.
+  const openContextMenuAtFocus = useCallback(() => {
+    const ents = entriesRef.current;
+    const idx = focusedRef.current;
+    if (idx < 0 || idx >= ents.length) return;
+    const entry = ents[idx];
+    const el = scrollRef?.current?.querySelector(`[data-entry-path="${CSS.escape(entry.path)}"]`);
+    const rect = el?.getBoundingClientRect();
+    const x = rect ? rect.left + 8 : window.innerWidth / 2;
+    const y = rect ? rect.bottom : window.innerHeight / 2;
+    onContextMenuRef.current?.(entry, x, y);
+  }, []);
+
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -313,6 +340,23 @@ export function useEntryKeyboard({
           onRename();
           break;
 
+        case "F10":
+          if (e.shiftKey && idx >= 0) {
+            e.preventDefault();
+            openContextMenuAtFocus();
+          }
+          break;
+
+        // The actual keyboard "Menu" key most Windows keyboards have,
+        // right next to Ctrl — its KeyboardEvent.key value really is the
+        // literal string "ContextMenu".
+        case "ContextMenu":
+          if (idx >= 0) {
+            e.preventDefault();
+            openContextMenuAtFocus();
+          }
+          break;
+
         case "a":
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
@@ -333,7 +377,7 @@ export function useEntryKeyboard({
           break;
       }
     },
-    [jumpTo, onSelectRange, onOpen, onDelete, onRename, typeAheadJump, moveVertical],
+    [jumpTo, onSelectRange, onOpen, onDelete, onRename, typeAheadJump, moveVertical, openContextMenuAtFocus],
   );
 
   useEffect(() => {

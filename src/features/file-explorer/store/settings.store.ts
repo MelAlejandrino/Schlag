@@ -8,6 +8,8 @@ import type { ViewMode } from "./file-explorer.store";
 
 export type StartupBehavior = "this-pc" | "last-folder" | "custom";
 export type SettingsSection = "about" | "appearance" | "general" | "indexing" | "storage" | "guide";
+export type Theme = "dark" | "light";
+export type Accent = "indigo" | "green" | "orange" | "pink";
 
 interface SettingsState {
   // Which section of the settings page is active.
@@ -20,9 +22,12 @@ interface SettingsState {
   defaultViewMode: ViewMode;
   startupBehavior: StartupBehavior;
   startupPath: string;
+  theme: Theme;
+  accent: Accent;
 
   // Backend settings (synced from Rust on load/save)
   excludedDirs: string[];
+  excludedPaths: string[];
 
   // Storage info (fetched on demand)
   storageInfo: StorageInfo | null;
@@ -38,8 +43,12 @@ interface SettingsState {
   setDefaultViewMode: (mode: ViewMode) => void;
   setStartupBehavior: (behavior: StartupBehavior) => void;
   setStartupPath: (path: string) => void;
+  setTheme: (theme: Theme) => void;
+  setAccent: (accent: Accent) => void;
   addExcludedDir: (name: string) => void;
   removeExcludedDir: (name: string) => void;
+  addExcludedPath: (path: string) => void;
+  removeExcludedPath: (path: string) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -53,8 +62,11 @@ export const useSettingsStore = create<SettingsState>()(
       defaultViewMode: "list",
       startupBehavior: "this-pc",
       startupPath: "",
+      theme: "dark",
+      accent: "indigo",
 
       excludedDirs: [],
+      excludedPaths: [],
       storageInfo: null,
 
       setActiveSection: (section) => set({ activeSection: section }),
@@ -62,16 +74,19 @@ export const useSettingsStore = create<SettingsState>()(
       loadSettings: async () => {
         try {
           const backend: AppSettings = await fileExplorerService.getSettings();
-          set({ excludedDirs: backend.excluded_dirs });
+          set({ excludedDirs: backend.excluded_dirs, excludedPaths: backend.excluded_paths });
         } catch (e) {
           console.warn("Failed to load backend settings:", e);
         }
       },
 
       saveSettings: async () => {
-        const { excludedDirs } = get();
+        const { excludedDirs, excludedPaths } = get();
         try {
-          await fileExplorerService.updateSettings({ excluded_dirs: excludedDirs });
+          await fileExplorerService.updateSettings({
+            excluded_dirs: excludedDirs,
+            excluded_paths: excludedPaths,
+          });
         } catch (e) {
           console.warn("Failed to save backend settings:", e);
         }
@@ -92,6 +107,8 @@ export const useSettingsStore = create<SettingsState>()(
       setDefaultViewMode: (mode) => set({ defaultViewMode: mode }),
       setStartupBehavior: (behavior) => set({ startupBehavior: behavior }),
       setStartupPath: (path) => set({ startupPath: path }),
+      setTheme: (theme) => set({ theme }),
+      setAccent: (accent) => set({ accent }),
 
       addExcludedDir: (name) => {
         const trimmed = name.trim().toLowerCase();
@@ -99,10 +116,30 @@ export const useSettingsStore = create<SettingsState>()(
         const { excludedDirs } = get();
         if (excludedDirs.includes(trimmed)) return;
         set({ excludedDirs: [...excludedDirs, trimmed] });
+        get().saveSettings();
       },
 
       removeExcludedDir: (name) => {
         set({ excludedDirs: get().excludedDirs.filter((d) => d !== name) });
+        get().saveSettings();
+      },
+
+      // Paths keep their original casing (for display) — dedup/comparison
+      // is still case-insensitive, matching Windows' own path semantics and
+      // indexer.rs's normalize_path. Trailing separator is stripped so
+      // "D:\ISOs" and "D:\ISOs\" aren't treated as two different entries.
+      addExcludedPath: (path) => {
+        const trimmed = path.trim().replace(/[\\/]+$/, "");
+        if (!trimmed) return;
+        const { excludedPaths } = get();
+        if (excludedPaths.some((p) => p.toLowerCase() === trimmed.toLowerCase())) return;
+        set({ excludedPaths: [...excludedPaths, trimmed] });
+        get().saveSettings();
+      },
+
+      removeExcludedPath: (path) => {
+        set({ excludedPaths: get().excludedPaths.filter((p) => p !== path) });
+        get().saveSettings();
       },
     }),
     {
@@ -114,6 +151,8 @@ export const useSettingsStore = create<SettingsState>()(
         defaultViewMode: state.defaultViewMode,
         startupBehavior: state.startupBehavior,
         startupPath: state.startupPath,
+        theme: state.theme,
+        accent: state.accent,
       }),
     },
   ),

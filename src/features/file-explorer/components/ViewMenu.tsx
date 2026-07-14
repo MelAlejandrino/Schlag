@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
+import { useMenuKeyboard } from "../lib/useMenuKeyboard";
 import type { GroupBy } from "../lib/groupEntries";
 import type { SortDirection, SortKey } from "../lib/sortEntries";
 import type { ViewMode } from "../store/file-explorer.store";
@@ -7,6 +8,7 @@ import type { ViewMode } from "../store/file-explorer.store";
 interface ViewMenuProps {
   x: number;
   y: number;
+  onDismiss: () => void;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   sortKey: SortKey;
@@ -52,7 +54,12 @@ function SegmentedRow<T extends string>({ options, active, onChange }: Segmented
       {options.map((option, i) => (
         <div key={option.key} className="flex items-center">
           {i > 0 && <div className="h-4 w-px shrink-0 bg-surface-container-highest" />}
-          <button type="button" className={segmentClass(active === option.key)} onClick={() => onChange(option.key)}>
+          <button
+            type="button"
+            aria-pressed={active === option.key}
+            className={segmentClass(active === option.key)}
+            onClick={() => onChange(option.key)}
+          >
             {option.label}
           </button>
         </div>
@@ -68,10 +75,12 @@ function SegmentedRow<T extends string>({ options, active, onChange }: Segmented
 // be self-evident.
 function DirectionButton({ direction, onChange }: { direction: SortDirection; onChange: (d: SortDirection) => void }) {
   const Icon = direction === "asc" ? ArrowUp : ArrowDown;
+  const label = direction === "asc" ? "Ascending — click for descending" : "Descending — click for ascending";
   return (
     <button
       type="button"
-      title={direction === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
+      title={label}
+      aria-label={label}
       className={directionButtonClass}
       onClick={() => onChange(direction === "asc" ? "desc" : "asc")}
     >
@@ -120,6 +129,7 @@ const GROUP_OPTIONS: { key: GroupBy; label: string }[] = [
 export function ViewMenu({
   x,
   y,
+  onDismiss,
   viewMode,
   onViewModeChange,
   sortKey,
@@ -133,6 +143,25 @@ export function ViewMenu({
 }: ViewMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: y, left: x });
+  // Not a role="menu" — its content is persistent toggle controls, not
+  // dismiss-on-activate commands, so the ARIA menu pattern doesn't fit. Reused
+  // here purely for its Escape-to-close handling; the arrow-key/menuitem
+  // lookup inside finds nothing (there are no [role="menuitem"] elements) and
+  // simply no-ops, which is fine — real Tab order already moves between the
+  // actual buttons.
+  const menuKeyboard = useMenuKeyboard(menuRef, onDismiss);
+
+  // useMenuKeyboard's own auto-focus only targets [role="menuitem"]
+  // elements, none of which exist here — without focus landing somewhere
+  // inside this popup, a later Escape keydown would still target whatever
+  // had focus before it opened (the Toolbar button, outside this DOM
+  // subtree) and never reach this container's own onKeyDown at all, since
+  // keyboard events bubble from the focused element, not from a mouse
+  // click's coordinates. Focusing the container itself (tabIndex={-1}
+  // below, focusable but not Tab-reachable) fixes that.
+  useEffect(() => {
+    menuRef.current?.focus();
+  }, []);
 
   useLayoutEffect(() => {
     const el = menuRef.current;
@@ -146,7 +175,11 @@ export function ViewMenu({
   return (
     <div
       ref={menuRef}
-      className="animate-menu-in themed-scroll fixed z-[70] flex max-h-[calc(100vh-16px)] w-72 flex-col gap-3 overflow-y-auto rounded-lg border border-surface-container-highest bg-surface-container-high p-3 shadow-lg"
+      role="group"
+      aria-label="View, sort, and group options"
+      tabIndex={-1}
+      onKeyDown={menuKeyboard.onKeyDown}
+      className="animate-menu-in themed-scroll fixed z-[70] flex max-h-[calc(100vh-16px)] w-72 flex-col gap-3 overflow-y-auto rounded-lg border border-surface-container-highest bg-surface-container-high p-3 shadow-lg outline-none"
       style={{ top: pos.top, left: pos.left }}
     >
       <div className="flex flex-col gap-1.5">

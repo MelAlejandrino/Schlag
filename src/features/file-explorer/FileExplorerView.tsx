@@ -3,6 +3,7 @@ import { AlertCircle, X } from "lucide-react";
 import { useFileExplorer } from "./useFileExplorer";
 import { useSearch } from "./useSearch";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
+import { useTheme } from "./lib/useTheme";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
@@ -20,6 +21,7 @@ import { WindowControls } from "./components/WindowControls";
 import { WindowResizeHandles } from "./components/WindowResizeHandles";
 
 export function FileExplorerView() {
+  useTheme();
   const explorer = useFileExplorer();
   const search = useSearch();
 
@@ -42,7 +44,12 @@ export function FileExplorerView() {
     onFocusAddress: () => explorer.requestFocusAddress(),
     onOpenSettings: () => explorer.openSettings(),
     onEscape: () => {
-      if (explorer.previewOpen) explorer.togglePreview();
+      // A context menu is its own dismissible overlay, same as every modal
+      // in this app — it must take priority over preview/selection, which
+      // it previously didn't (Escape silently did the wrong thing while a
+      // context menu was open, since this handler never checked for one).
+      if (explorer.contextMenu) explorer.closeContextMenu();
+      else if (explorer.previewOpen) explorer.togglePreview();
       else explorer.clearSelection();
     },
   });
@@ -215,6 +222,7 @@ export function FileExplorerView() {
       {explorer.contextMenu && (
         <ContextMenu
           state={explorer.contextMenu}
+          onDismiss={explorer.closeContextMenu}
           selectedCount={explorer.selectedEntries.length}
           selectedIsDir={explorer.selectedIsDir}
           canPaste={explorer.canPaste}

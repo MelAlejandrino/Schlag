@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Folder } from "lucide-react";
 import { startDrag } from "../lib/dnd";
@@ -200,6 +200,7 @@ export function EntryGrid({
     scrollToEntryRef,
     gridRows,
     onPreview,
+    onContextMenu,
   });
 
   // Wrap onSelect to synchronously update the keyboard focus index when
@@ -257,6 +258,8 @@ export function EntryGrid({
     <div
       ref={containerRef}
       tabIndex={0}
+      role="listbox"
+      aria-multiselectable="true"
       onKeyDown={entryKeyboard.onKeyDown}
       className={`themed-scroll min-h-0 flex-1 overflow-y-auto p-2 pb-24 transition-colors duration-150 outline-none ${
         backgroundDrop.isOver ? "bg-surface-container-low" : ""
@@ -357,11 +360,21 @@ interface EntryTileProps {
   onDrop: (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
 }
 
-function EntryTile({ entry, iconSize, selected, cut, onOpen, onSelect, onContextMenu, onDragPaths, onDrop }: EntryTileProps) {
+const EntryTile = memo(function EntryTile({
+  entry,
+  iconSize,
+  selected,
+  cut,
+  onOpen,
+  onSelect,
+  onContextMenu,
+  onDragPaths,
+  onDrop,
+}: EntryTileProps) {
   const dropTarget = useDropTarget(entry.path, onDrop);
   // Stops propagation so a drop that lands on this specific tile doesn't
   // also bubble up and re-trigger the grid's own background drop (which
-  // targets the currently browsed folder, not this tile's folder).
+  // targets currentPath, not this specific tile's path).
   const dropProps = entry.is_dir
     ? {
         onDragOver: (e: DragEvent<HTMLDivElement>) => {
@@ -384,8 +397,10 @@ function EntryTile({ entry, iconSize, selected, cut, onOpen, onSelect, onContext
 
   return (
     <div
-      draggable
+      role="option"
+      aria-selected={selected}
       data-entry-path={entry.path}
+      draggable
       onDragStart={(e) => startDrag(e, onDragPaths(entry))}
       onClick={(e) => onSelect(entry, e)}
       onDoubleClick={() => onOpen(entry)}
@@ -430,4 +445,4 @@ function EntryTile({ entry, iconSize, selected, cut, onOpen, onSelect, onContext
       </span>
     </div>
   );
-}
+});

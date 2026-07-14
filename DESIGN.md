@@ -48,6 +48,38 @@ colors:
   background: '#131313'
   on-background: '#e4e2e1'
   surface-variant: '#353535'
+  # Light theme — see the "Light Theme" section below. Every token here has
+  # a dark-theme counterpart above with the same role; unlisted roles
+  # (secondary/tertiary-fixed/inverse-*, etc.) are not wired into the live
+  # Tailwind theme (App.css) and don't need a light variant yet.
+  light-surface: '#fdfdff'
+  light-surface-container-lowest: '#ffffff'
+  light-surface-container-low: '#f9fafd'
+  light-surface-container: '#f4f5f9'
+  light-surface-container-high: '#ebecf3'
+  light-surface-container-highest: '#dfe1e9'
+  light-on-surface: '#181a24'
+  light-on-surface-variant: '#494c5e'
+  light-outline: '#595c6f'
+  light-outline-variant: '#abadbb'
+  light-tertiary: '#a44100'
+  light-tertiary-container: '#b15300'
+  light-error: '#a50013'
+  light-error-container: '#fed2cd'
+  light-on-error-container: '#5f0000'
+  light-primary: '#3d33b0'
+  # Accent colors — user-selectable (Settings → Appearance). primary-container
+  # is shared between both themes for each accent (see "Accent Colors"
+  # below); primary is the one role that differs per theme.
+  accent-green-primary-container: '#0c7219'
+  accent-green-primary-dark: '#9cd59b'
+  accent-green-primary-light: '#005f0a'
+  accent-orange-primary-container: '#b23f00'
+  accent-orange-primary-dark: '#f7b385'
+  accent-orange-primary-light: '#8d2200'
+  accent-pink-primary-container: '#c61e54'
+  accent-pink-primary-dark: '#fbafba'
+  accent-pink-primary-light: '#9f003a'
 typography:
   headline-lg:
     fontFamily: Geist
@@ -116,6 +148,28 @@ This design system utilizes a sophisticated grayscale palette to establish hiera
 - **Border/UI (Surface 2):** `#262626` — Used for 1px separators and subtle component outlines.
 - **Accent:** `Cyber Indigo (#5856D6)` — Used sparingly for active states, focus rings, and primary actions to guide the eye.
 - **Text:** Primary text is `#EDEDED`, secondary text is `#A1A1AA`, and disabled states use `#52525B`.
+
+## Light Theme
+
+Dark remains the default, but every color role above has a light-theme counterpart (Settings → Appearance → Theme), applied at runtime via a `data-theme="light"` attribute on the document root that overrides the same CSS custom properties Tailwind utilities already read through — no separate light-mode utility classes anywhere in the app.
+
+**Deliberately not the warm cream/sand near-white that's the default "AI light mode."** This app's own brand personality is technical minimalism, not consumer softness, so the light palette reads closer to VS Code Light+ / GitHub Light / a JetBrains IDE's light theme: cool, purple-tinted neutrals (hue-278, the brand's own indigo hue, at low chroma 0.002–0.012 — barely perceptible as "tinted" but enough for subconscious cohesion with the brand color) rather than a soft, friendly off-white.
+
+- **Background:** `#fdfdff` (surface) — a crisp, cool near-white, not cream.
+- **Surface containers:** a 6-step scale from `#ffffff` (lowest/most recessed) to `#dfe1e9` (highest/most elevated) — inverted from dark mode's own direction (there, "highest" means lightest; in light mode "highest" means the most visibly tinted, since elevation is conveyed by moving *away* from pure white in both directions). The bottom four steps (`lowest`/`surface`/`low`/`container`, which back the sidebar, main content, toolbar, and title bar respectively) are deliberately kept within a ~2% lightness band of each other — an earlier, wider-spread pass made the toolbar/title bar read as a visibly grayer stripe across the top of the window, which came across as "the whole app looks gray." `-high`/`-highest` keep more spread since those specifically need to stay visible for hover/selected states.
+- **Text:** `#181a24` (primary, 17:1 against surface) / `#494c5e` (secondary, 8.3:1).
+- **Semantic colors (error, favorite/tertiary)** get proper light-mode redesigns rather than reused dark values — Material's own convention (a light-tinted container + dark text, inverted from dark mode's dark container + light text) matters here specifically because `error-container` renders as a translucent wash in a couple of banners (`FileExplorerView`, `SearchModal`); keeping the dark theme's saturated-red container unchanged would blend to a pale pink wash while the text stayed light-pink-on-light-pink — verified unreadable (1.2:1) before this fix.
+- Every pairing (body text, UI borders, button text-on-fill, and text-on-translucent-wash) is OKLCH-derived and contrast-checked against WCAG AA — body text ≥4.5:1, UI borders ≥3:1, all comfortably cleared with margin.
+
+*Known gap, not introduced by this pass:* `outline-variant` is used as small dim text in a couple of Settings-page labels in **both** themes, at roughly 2:1 contrast — a pre-existing gap that predates the light theme, tracked under Phase 6's separate Accessibility item rather than fixed here.
+
+## Accent Colors
+
+Four selectable accents (Settings → Appearance → Accent Color): Cyber Indigo (default), Green, Orange, Pink — all built on the same OKLCH formula for perceptual consistency across hues, applied via a `data-accent` attribute alongside `data-theme`.
+
+- **`primary-container`** (the solid, saturated fill behind CTA buttons — see Components below) is **shared between both themes per accent**. It's always paired with light/white text on top regardless of app theme, so it doesn't need to invert.
+- **`primary`** (the text/icon role — active states, links, selection) is the one role that flips: a light tint for dark backgrounds, a dark saturated tone for light backgrounds, per accent. This is the only token that varies along *both* axes (theme × accent) at once.
+- Tertiary (the favorite/star color) is **not** part of the accent system — it stays a fixed amber regardless of which accent is selected, theme-dependent only.
 
 ## Typography
 Typography is the core of the file explorer experience. We use **Geist** for its exceptional legibility and technical aesthetic. For metadata, file paths, and technical details, we employ **JetBrains Mono** to provide a distinct visual "mode" for data-heavy information.

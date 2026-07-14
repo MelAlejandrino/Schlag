@@ -159,12 +159,7 @@ pub fn delete_entry(path: String, conn: tauri::State<'_, Mutex<rusqlite::Connect
 #[tauri::command]
 pub fn copy_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
     let from = Path::new(&from);
-    let to = unique_destination(Path::new(&to));
-    if from.is_dir() {
-        copy_dir_all(from, &to).map_err(|e| e.to_string())?;
-    } else {
-        fs::copy(from, &to).map(|_| ()).map_err(|e| e.to_string())?;
-    }
+    let to = copy_entry_inner(from, Path::new(&to))?;
     index_tree(&conn, &content_tx, &to);
     Ok(())
 }
@@ -185,8 +180,11 @@ pub fn move_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlit
     }
     // ponytail: fs::rename fails across drives/volumes; fall back to
     // copy-then-remove-original. Upgrade to a progress-tracked move if
-    // large cross-volume transfers become common.
-    copy_entry_inner(&from_path, &to)?;
+    // large cross-volume transfers become common. `to` is already unique
+    // (line above) — copy_entry_inner uniquifying it again is a safe no-op
+    // (nothing else can have claimed that exact name in between), not a
+    // second, different rename.
+    let to = copy_entry_inner(&from_path, &to)?;
     if from_path.is_dir() {
         fs::remove_dir_all(&from_path).map_err(|e| e.to_string())?;
     } else {
@@ -260,15 +258,56 @@ fn index_tree(conn: &Mutex<rusqlite::Connection>, content_tx: &ContentEventSende
     }
 }
 
-// Non-Tauri version of copy_entry for internal use by move_entry's
-// cross-drive fallback. Same logic, just without the #[tauri::command]
-// signature or state injection.
-fn copy_entry_inner(from: &Path, to: &Path) -> Result<(), String> {
-    if from.is_dir() {
-        copy_dir_all(from, to).map_err(|e| e.to_string())
-    } else {
-        fs::copy(from, to).map(|_| ()).map_err(|e| e.to_string())
+// Windows' ERROR_SHARING_VIOLATION (raw_os_error 32) is almost always a
+// *transient* lock — antivirus real-time scanning, another app briefly
+// holding a handle, cloud-sync reading the file — rather than a genuine
+// permissions problem, and `fs::copy` has zero retry of its own. A short,
+// bounded retry clears the transient case for free without masking a real,
+// persistent lock (it still fails with the same error after MAX_ATTEMPTS).
+// ponytail: no proof yet this is hit in real usage often enough to matter —
+// added defensively since it's a well-known Windows failure mode for any
+// file a real user might copy while it's mid-scan/mid-sync, and the fix is
+// three lines; revisit if it never actually fires in practice.
+const SHARING_VIOLATION: i32 = 32;
+const MAX_COPY_ATTEMPTS: u32 = 5;
+const COPY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
+
+fn copy_with_retry(from: &Path, to: &Path) -> std::io::Result<u64> {
+    let mut last_err = None;
+    for attempt in 0..MAX_COPY_ATTEMPTS {
+        match fs::copy(from, to) {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) if e.raw_os_error() == Some(SHARING_VIOLATION) && attempt + 1 < MAX_COPY_ATTEMPTS => {
+                std::thread::sleep(COPY_RETRY_DELAY);
+                last_err = Some(e);
+            }
+            Err(e) => return Err(e),
+        }
     }
+    Err(last_err.expect("loop always sets this before exhausting MAX_COPY_ATTEMPTS"))
+}
+
+// Non-Tauri version of copy_entry for internal use by move_entry's
+// cross-drive fallback (and by copy_entry itself, below). Applies
+// unique_destination internally and returns the actual path used — the
+// real bug this fixes: this function used to skip uniquification entirely
+// (only the public copy_entry command applied it, via its own separate,
+// duplicated copy logic), so calling this directly with the same source and
+// destination path — copying a file onto itself — hit Windows'
+// ERROR_SHARING_VIOLATION deterministically (you cannot open one file
+// simultaneously for reading and truncating-writing), which looked like a
+// flaky antivirus-lock race until actually diagnosed: a plain fs::copy to a
+// *different* destination succeeded immediately, proving there was no
+// ambient lock at all — the retry above was solving a different, real but
+// separate problem, not this one.
+fn copy_entry_inner(from: &Path, to: &Path) -> Result<PathBuf, String> {
+    let to = unique_destination(to);
+    if from.is_dir() {
+        copy_dir_all(from, &to).map_err(|e| e.to_string())?;
+    } else {
+        copy_with_retry(from, &to).map_err(|e| e.to_string())?;
+    }
+    Ok(to)
 }
 
 #[cfg(test)]
@@ -344,7 +383,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
         if entry.file_type()?.is_dir() {
             copy_dir_all(&entry.path(), &dst_path)?;
         } else {
-            fs::copy(entry.path(), dst_path)?;
+            copy_with_retry(&entry.path(), &dst_path)?;
         }
     }
     Ok(())

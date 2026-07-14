@@ -12,10 +12,16 @@ export function WindowControls() {
 
   return (
     <div className="flex shrink-0 items-stretch">
-      <button type="button" className={controlClass} title="Minimize" onClick={minimize}>
+      <button type="button" className={controlClass} title="Minimize" aria-label="Minimize" onClick={minimize}>
         <Minus size={15} strokeWidth={1.75} />
       </button>
-      <button type="button" className={controlClass} title={isMaximized ? "Restore" : "Maximize"} onClick={toggleMaximize}>
+      <button
+        type="button"
+        className={controlClass}
+        title={isMaximized ? "Restore" : "Maximize"}
+        aria-label={isMaximized ? "Restore" : "Maximize"}
+        onClick={toggleMaximize}
+      >
         {/* Two overlapping squares (Copy) is the closest lucide glyph to
             Windows' own "restore down" icon; a single square is maximize. */}
         {isMaximized ? <Copy size={13} strokeWidth={1.75} /> : <Square size={13} strokeWidth={1.75} />}
@@ -27,6 +33,7 @@ export function WindowControls() {
         type="button"
         className={`${controlClass} hover:!bg-error-container hover:!text-on-error-container`}
         title="Close"
+        aria-label="Close"
         onClick={close}
       >
         <X size={16} strokeWidth={1.75} />

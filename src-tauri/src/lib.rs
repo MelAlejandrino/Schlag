@@ -26,8 +26,9 @@ pub fn run() {
             let settings_path = data_dir.join("settings.json");
             let app_settings = settings::load_settings(&settings_path);
             indexer::set_user_excluded_dirs(app_settings.excluded_dirs.clone());
+            indexer::set_user_excluded_paths(app_settings.excluded_paths.clone());
             app.manage(Mutex::new(app_settings));
-            app.manage(settings_path);
+            app.manage(settings::SettingsPath(settings_path));
 
             // Search gets its own connection to the same WAL-mode db rather
             // than sharing the indexer thread's writer connection — WAL
