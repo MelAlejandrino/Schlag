@@ -1,12 +1,15 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   ArrowLeft,
   BookOpen,
   Database,
   FolderSearch,
   Info,
+  Loader2,
   Palette,
   Plus,
+  RefreshCw,
   Settings,
   X,
 } from "lucide-react";
@@ -19,6 +22,7 @@ import {
 import type { SortKey } from "../lib/sortEntries";
 import type { GroupBy } from "../lib/groupEntries";
 import type { ViewMode } from "../store/file-explorer.store";
+import { useUpdater } from "../lib/useUpdater";
 
 // ─── Design tokens ────────────────────────────────────────────────
 // Every value here maps to a DESIGN.md token or an established pattern
@@ -199,6 +203,13 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
 // ─── About ────────────────────────────────────────────────────────
 
 function AboutSection() {
+  const [version, setVersion] = useState("");
+  const updater = useUpdater();
+
+  useEffect(() => {
+    getVersion().then(setVersion);
+  }, []);
+
   return (
     <div className="flex max-w-xl flex-col gap-6">
       <div>
@@ -214,7 +225,7 @@ function AboutSection() {
         </div>
         <div>
           <p className="text-[14px] font-medium text-on-surface">Schlag</p>
-          <p className="font-mono text-[11px] text-outline">Version 0.1.0</p>
+          <p className="font-mono text-[11px] text-outline">Version {version || "…"}</p>
         </div>
       </div>
 
@@ -235,6 +246,68 @@ function AboutSection() {
             </span>
           ))}
         </div>
+      </Section>
+
+      <hr className="border-surface-container-highest" />
+
+      <Section title="Updates">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={updater.status === "checking" || updater.status === "downloading"}
+            onClick={updater.checkForUpdate}
+            className={`flex items-center gap-1.5 rounded border border-surface-container-highest bg-surface-container px-2.5 py-1 text-[11px] text-on-surface transition-colors duration-150 hover:border-primary-container disabled:cursor-default disabled:opacity-50 ${focusRing}`}
+          >
+            {updater.status === "checking" ? (
+              <Loader2 size={12} strokeWidth={2} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} strokeWidth={2} />
+            )}
+            Check for Updates
+          </button>
+
+          {updater.status === "up-to-date" && (
+            <span className="text-[12px] text-on-surface-variant">You're on the latest version.</span>
+          )}
+          {updater.status === "error" && (
+            <span className="text-[12px] text-error">{updater.error}</span>
+          )}
+        </div>
+
+        {updater.status === "available" && updater.update && (
+          <div className="flex flex-col gap-2 rounded border border-primary-container/40 bg-primary-container/10 p-3">
+            <p className="text-[12px] text-on-surface">
+              Version {updater.update.version} is available (you have {updater.update.currentVersion}).
+            </p>
+            <button
+              type="button"
+              onClick={updater.downloadAndInstall}
+              className={`w-fit rounded bg-primary-container px-2.5 py-1 text-[11px] font-medium text-white transition-colors duration-150 hover:bg-primary-container/90 ${focusRing}`}
+            >
+              Download and Install
+            </button>
+          </div>
+        )}
+
+        {updater.status === "downloading" && (
+          <p className="flex items-center gap-1.5 text-[12px] text-on-surface-variant">
+            <Loader2 size={12} strokeWidth={2} className="animate-spin" />
+            Downloading update…
+          </p>
+        )}
+
+        {updater.status === "ready" && (
+          <div className="flex flex-col gap-2 rounded border border-primary-container/40 bg-primary-container/10 p-3">
+            <p className="text-[12px] text-on-surface">Update downloaded — restart to finish installing.</p>
+            <button
+              type="button"
+              onClick={updater.relaunch}
+              className={`w-fit rounded bg-primary-container px-2.5 py-1 text-[11px] font-medium text-white transition-colors duration-150 hover:bg-primary-container/90 ${focusRing}`}
+            >
+              Restart Now
+            </button>
+          </div>
+        )}
       </Section>
     </div>
   );
