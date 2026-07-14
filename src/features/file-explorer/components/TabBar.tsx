@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { isTabDrag, startTabDrag } from "../lib/dnd";
 import { useDropTarget } from "../lib/useDropTarget";
+import { useExclusiveMenu } from "../lib/useExclusiveMenu";
 import { tabLabel, type Tab } from "../lib/tabs";
 import { TabContextMenu } from "./TabContextMenu";
 import { WindowControls } from "./WindowControls";
@@ -57,6 +58,8 @@ export function TabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab, o
       window.removeEventListener("resize", close);
     };
   }, [contextMenu]);
+
+  useExclusiveMenu(!!contextMenu, () => setContextMenu(null));
 
   // Live reordering: as the pointer crosses a tab's midpoint, the dragged
   // tab moves to that side immediately (the tabs shift in real time, like

@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   ArrowLeft,
   BookOpen,
@@ -231,8 +232,8 @@ function AboutSection() {
 
       <p className="max-w-[60ch] text-[13px] leading-relaxed text-on-surface-variant">
         Schlag indexes your files in the background, searches millions of entries instantly,
-        previews documents without opening them, and provides power-user workflows — all in a
-        native desktop experience powered by Tauri and React.
+        and provides power-user workflows — all in a native desktop experience powered by Tauri
+        and React.
       </p>
 
       <Section title="Tech Stack">
@@ -431,7 +432,7 @@ function GeneralSection() {
 
       <hr className="border-surface-container-highest" />
 
-      <Section title="Default View" description="Applied on next app launch. The current session keeps its own settings.">
+      <Section title="Default View" description="Applies immediately, and becomes the default for future launches.">
         <div className="flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
             <span className="font-mono text-[11px] uppercase tracking-wide text-outline">Sort by</span>
@@ -583,6 +584,11 @@ function IndexingSection() {
   const [dirError, setDirError] = useState("");
   const [newPath, setNewPath] = useState("");
   const [pathError, setPathError] = useState("");
+  // Exclusions only take effect on the next scan, which only ever runs at
+  // startup (indexer.rs) — this session-local flag surfaces a restart
+  // prompt right where the change was made, instead of leaving the user to
+  // remember the "Changes take effect on next app restart" copy above.
+  const [restartNeeded, setRestartNeeded] = useState(false);
 
   function handleAddDir() {
     const trimmed = newDir.trim();
@@ -593,6 +599,7 @@ function IndexingSection() {
     store.addExcludedDir(trimmed);
     setNewDir("");
     setDirError("");
+    setRestartNeeded(true);
   }
 
   function handleDirKeyDown(e: KeyboardEvent) {
@@ -611,6 +618,7 @@ function IndexingSection() {
     store.addExcludedPath(trimmed);
     setNewPath("");
     setPathError("");
+    setRestartNeeded(true);
   }
 
   function handlePathKeyDown(e: KeyboardEvent) {
@@ -628,6 +636,20 @@ function IndexingSection() {
           Control which directories are excluded from the file index.
         </p>
       </div>
+
+      {restartNeeded && (
+        <div className="flex items-center justify-between gap-3 rounded border border-primary-container/40 bg-primary-container/10 px-3 py-2">
+          <p className="text-[12px] text-on-surface">Restart Schlag to apply your exclusion changes.</p>
+          <button
+            type="button"
+            onClick={() => relaunch()}
+            className={`flex shrink-0 items-center gap-1.5 rounded bg-primary-container px-2.5 py-1 text-[11px] font-medium text-white transition-colors duration-150 hover:bg-primary-container/90 ${focusRing}`}
+          >
+            <RefreshCw size={12} strokeWidth={2} />
+            Restart Now
+          </button>
+        </div>
+      )}
 
       <Section
         title="Excluded Directories"
@@ -653,7 +675,13 @@ function IndexingSection() {
             {store.excludedDirs.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {store.excludedDirs.map((name) => (
-                  <RemovableChip key={name} onRemove={() => store.removeExcludedDir(name)}>
+                  <RemovableChip
+                    key={name}
+                    onRemove={() => {
+                      store.removeExcludedDir(name);
+                      setRestartNeeded(true);
+                    }}
+                  >
                     {name}
                   </RemovableChip>
                 ))}
@@ -686,7 +714,14 @@ function IndexingSection() {
         {store.excludedPaths.length > 0 ? (
           <div className="themed-scroll flex max-h-40 flex-col gap-1.5 overflow-y-auto pr-1">
             {store.excludedPaths.map((path) => (
-              <RemovableChip key={path} onRemove={() => store.removeExcludedPath(path)} wide>
+              <RemovableChip
+                key={path}
+                onRemove={() => {
+                  store.removeExcludedPath(path);
+                  setRestartNeeded(true);
+                }}
+                wide
+              >
                 {path}
               </RemovableChip>
             ))}
@@ -795,14 +830,12 @@ function GuideSection() {
     { keys: "Ctrl+L", desc: "Focus address bar" },
     { keys: "Ctrl+N", desc: "New folder" },
     { keys: "Ctrl+D", desc: "Toggle favorite" },
-    { keys: "Ctrl+P", desc: "Toggle preview pane" },
     { keys: "Ctrl+R", desc: "Refresh" },
     { keys: "Ctrl+C / X / V", desc: "Copy / Cut / Paste" },
     { keys: "Ctrl+,", desc: "Open settings" },
-    { keys: "Space", desc: "Toggle preview pane" },
     { keys: "F2", desc: "Rename selected" },
     { keys: "Delete", desc: "Delete selected" },
-    { keys: "Escape", desc: "Close preview / clear selection" },
+    { keys: "Escape", desc: "Clear selection" },
     { keys: "Arrow keys", desc: "Navigate entries" },
     { keys: "Home / End", desc: "Jump to first / last" },
     { keys: "Enter", desc: "Open selected" },
@@ -843,7 +876,6 @@ function GuideSection() {
             "Drag files between tabs — hover over a tab to switch, then drop.",
             "Use the search modal's folder scope to search within the current directory.",
             "Content search indexes text inside PDFs, Office docs, Markdown, and code files.",
-            "The preview pane supports images, video, PDF, Markdown, text, Office, and ZIP archives.",
             "Group entries by type, date, or size using the View menu in the toolbar.",
             "Star a folder to add it to your Favorites in the sidebar.",
           ].map((tip, i) => (

@@ -19,6 +19,7 @@ import { formatDate } from "../lib/format";
 import { splitHighlights } from "../lib/highlightSnippet";
 import { countActiveFilters, SearchFiltersFields } from "./SearchFiltersFields";
 import { ContextMenu } from "./ContextMenu";
+import { useExclusiveMenu } from "../lib/useExclusiveMenu";
 
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-container focus-visible:ring-offset-1 focus-visible:ring-offset-surface-container-high";
@@ -164,6 +165,8 @@ export function SearchModal() {
       window.removeEventListener("resize", close);
     };
   }, [resultMenu]);
+
+  useExclusiveMenu(!!resultMenu, () => setResultMenu(null));
 
   // Depends on the raw store arrays, not the derived/reordered
   // `activeResults` — that's recomputed fresh every render, so depending on

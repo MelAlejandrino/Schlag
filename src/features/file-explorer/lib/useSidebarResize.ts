@@ -9,6 +9,6 @@ const MAX_WIDTH = 420;
 export function useSidebarResize() {
   const width = useFileExplorerStore((s) => s.sidebarWidth);
   const setSidebarWidth = useFileExplorerStore((s) => s.setSidebarWidth);
-  const drag = useDragResize({ width, onWidthChange: setSidebarWidth, min: MIN_WIDTH, max: MAX_WIDTH, anchor: "left" });
+  const drag = useDragResize({ width, onWidthChange: setSidebarWidth, min: MIN_WIDTH, max: MAX_WIDTH });
   return { width, ...drag };
 }

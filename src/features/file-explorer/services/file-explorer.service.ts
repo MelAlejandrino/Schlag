@@ -2,7 +2,6 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import type {
   AppSettings,
-  ArchiveEntry,
   ContentSearchResult,
   Entry,
   IndexStatus,
@@ -35,10 +34,6 @@ export const fileExplorerService = {
   recentFiles: () => invoke<Entry[]>("recent_files"),
   searchContent: (query: string, folder: string | undefined, keywordMode: boolean) =>
     invoke<ContentSearchResult[]>("search_content", { query, folder, keywordMode }),
-  previewText: (path: string) => invoke<string | null>("preview_text", { path }),
-  // Rust's (Vec<ArchiveEntry>, bool) return type serializes as a 2-element
-  // JSON array via serde, not an object — the tuple shape carries through.
-  listArchiveEntries: (path: string) => invoke<[ArchiveEntry[], boolean]>("list_archive_entries", { path }),
   // Not an invoke() call, but still a Tauri API — belongs here per this
   // file's own rule (the only place that calls Tauri APIs directly).
   assetUrl: (path: string) => convertFileSrc(path),

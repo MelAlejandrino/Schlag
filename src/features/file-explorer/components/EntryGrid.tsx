@@ -33,7 +33,6 @@ interface EntryGridProps {
   onSelectRange: (path: string) => void;
   onDelete: () => void;
   onRename: () => void;
-  onPreview?: () => void;
 }
 
 const TILE_SIZE: Record<EntryGridProps["size"], { tile: number; icon: number }> = {
@@ -104,7 +103,6 @@ export function EntryGrid({
   onSelectRange,
   onDelete,
   onRename,
-  onPreview,
 }: EntryGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { tile, icon } = TILE_SIZE[size];
@@ -114,8 +112,8 @@ export function EntryGrid({
   // useLayoutEffect (not useEffect) so the column count is right before the
   // first paint — otherwise there'd be a visible flash of a 1-column layout
   // before this measures the real container width. Recomputes on resize
-  // (window resize, or the Sidebar/PreviewPane drag-handles changing how
-  // much width is left for this pane).
+  // (window resize, or the Sidebar drag-handle changing how much width is
+  // left for this pane).
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -199,7 +197,6 @@ export function EntryGrid({
     scrollRef: containerRef,
     scrollToEntryRef,
     gridRows,
-    onPreview,
     onContextMenu,
   });
 

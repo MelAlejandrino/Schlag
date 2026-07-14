@@ -5,11 +5,6 @@ interface UseDragResizeOptions {
   onWidthChange: (width: number) => void;
   min: number;
   max: number;
-  // Which screen edge the pane is anchored to — flips the sign of the drag
-  // delta. A left-anchored pane (Sidebar) grows when its right-edge handle
-  // is dragged rightward (+delta); a right-anchored pane (PreviewPane) grows
-  // when its left-edge handle is dragged leftward (-delta).
-  anchor: "left" | "right";
 }
 
 // Pointer capture (rather than window mousemove/mouseup listeners) keeps
@@ -17,7 +12,7 @@ interface UseDragResizeOptions {
 // mid-drag. The browser still renders whatever cursor is under the actual
 // mouse position though, so the body-level cursor override below is what
 // keeps the col-resize cursor visually consistent for the whole gesture.
-export function useDragResize({ width, onWidthChange, min, max, anchor }: UseDragResizeOptions) {
+export function useDragResize({ width, onWidthChange, min, max }: UseDragResizeOptions) {
   const [isResizing, setIsResizing] = useState(false);
   const startRef = useRef({ x: 0, width: 0 });
 
@@ -42,8 +37,7 @@ export function useDragResize({ width, onWidthChange, min, max, anchor }: UseDra
   function onResizeMove(e: ReactPointerEvent<HTMLDivElement>) {
     if (!isResizing) return;
     const delta = e.clientX - startRef.current.x;
-    const signedDelta = anchor === "left" ? delta : -delta;
-    onWidthChange(Math.min(max, Math.max(min, startRef.current.width + signedDelta)));
+    onWidthChange(Math.min(max, Math.max(min, startRef.current.width + delta)));
   }
 
   function onResizeEnd(e: ReactPointerEvent<HTMLDivElement>) {

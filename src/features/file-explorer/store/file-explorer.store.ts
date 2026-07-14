@@ -72,13 +72,9 @@ interface FileExplorerState {
   // Persisted the same way favorites is — a lasting per-user preference, not
   // per-session state. Default matches DESIGN.md's sidebar-width token.
   sidebarWidth: number;
-  // Same lasting-preference persistence as sidebarWidth/favorites. Default
-  // matches usePreviewResize's MIN_WIDTH-adjacent starting size.
-  previewOpen: boolean;
-  previewWidth: number;
   // A single global preference, not per-folder memory like real Explorer —
   // a stated v1 scope limit, not an oversight. Persisted the same
-  // lasting-preference way as sidebarWidth/previewOpen. Stays global across
+  // lasting-preference way as sidebarWidth. Stays global across
   // tabs too, same reasoning — see setSortKey etc. below for how a change
   // still reaches every open tab's already-loaded entries, not just the
   // active one.
@@ -132,8 +128,6 @@ interface FileExplorerState {
   requestFocusAddress: () => void;
   setAddressInput: (value: string) => void;
   setSidebarWidth: (width: number) => void;
-  togglePreview: () => void;
-  setPreviewWidth: (width: number) => void;
   setSortKey: (key: SortKey) => void;
   setSortDirection: (direction: SortDirection) => void;
   toggleSortDirection: () => void;
@@ -201,8 +195,6 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         drives: [],
         favorites: [],
         sidebarWidth: 240,
-        previewOpen: false,
-        previewWidth: 320,
         sortKey: "name",
         sortDirection: "asc",
         groupBy: "none",
@@ -263,6 +255,14 @@ export const useFileExplorerStore = create<FileExplorerState>()(
               historyIndex: firstTab.historyIndex,
               selectedPaths: firstTab.selectedPaths,
               selectionAnchor: firstTab.selectionAnchor,
+              // Settings > General's "Default View" is documented (SettingsPage.tsx)
+              // as "applied on next app launch" — this is that application point.
+              // Overrides whatever sortKey/groupBy/viewMode this store's own
+              // persist rehydrated from the previous session.
+              sortKey: settings.defaultSortKey,
+              sortDirection: settings.defaultSortDirection,
+              groupBy: settings.defaultGroupBy,
+              viewMode: settings.defaultViewMode,
             });
             await get().navigate(startupPath);
           } catch (e) {
@@ -482,8 +482,6 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         closeSettings: () => set({ viewState: "browse" }),
         setAddressInput: (value: string) => applyTabPatch(get().activeTabId, { addressInput: value }),
         setSidebarWidth: (width: number) => set({ sidebarWidth: width }),
-        togglePreview: () => set({ previewOpen: !get().previewOpen }),
-        setPreviewWidth: (width: number) => set({ previewWidth: width }),
 
         // Always resets to ascending — matches Explorer's own convention of a
         // fresh column always starting ascending, rather than carrying over
@@ -572,13 +570,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
       partialize: (state) => ({
         favorites: state.favorites,
         sidebarWidth: state.sidebarWidth,
-        previewOpen: state.previewOpen,
-        previewWidth: state.previewWidth,
-        sortKey: state.sortKey,
-        sortDirection: state.sortDirection,
-        groupBy: state.groupBy,
         groupOrder: state.groupOrder,
-        viewMode: state.viewMode,
         currentPath: state.currentPath,
       }),
     },

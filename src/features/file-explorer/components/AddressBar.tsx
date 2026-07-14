@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Monitor, MoreHorizontal, Pencil } from "lucide-react";
+import { Monitor, MoreHorizontal, Pencil, Star } from "lucide-react";
 import { useBreadcrumbOverflow } from "../lib/useBreadcrumbOverflow";
 
 interface AddressBarProps {
@@ -12,12 +12,31 @@ interface AddressBarProps {
   // Incremented by Ctrl+L to request focus — AddressBar enters edit
   // mode when this changes, same one-shot-signal pattern as revealPath.
   focusRequest?: number;
+  // Favoriting the browsed folder — moved in from Toolbar's own standalone
+  // Star button so it reads as a browser-omnibox bookmark star (Chrome/Arc's
+  // own address-bar affordance) instead of a same-weight sibling of every
+  // other toolbar icon. Only rendered in the non-editing view (like the
+  // pencil below) — This PC isn't a folder, so isThisPC hides it outright
+  // rather than showing a dead disabled star (this app's own established
+  // "hide, don't disable, when an action can't apply" precedent).
+  isCurrentFavorite: boolean;
+  onToggleFavorite: () => void;
 }
 
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-container focus-visible:ring-offset-1 focus-visible:ring-offset-surface-container";
 
-export function AddressBar({ currentPath, isThisPC, value, onChange, onSubmit, onNavigate, focusRequest }: AddressBarProps) {
+export function AddressBar({
+  currentPath,
+  isThisPC,
+  value,
+  onChange,
+  onSubmit,
+  onNavigate,
+  focusRequest,
+  isCurrentFavorite,
+  onToggleFavorite,
+}: AddressBarProps) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -65,6 +84,24 @@ export function AddressBar({ currentPath, isThisPC, value, onChange, onSubmit, o
       className="flex flex-1 items-center gap-1 overflow-hidden rounded-lg border border-surface-container-highest bg-surface-container px-2.5 py-1.5 text-[13px] text-on-surface transition-colors duration-150 hover:border-outline-variant"
       onClick={() => setEditing(true)}
     >
+      {!isThisPC && (
+        <button
+          type="button"
+          title={isCurrentFavorite ? "Unstar this folder (Ctrl+D)" : "Star this folder (Ctrl+D)"}
+          aria-label={isCurrentFavorite ? "Unstar this folder" : "Star this folder"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite();
+          }}
+          className={`shrink-0 rounded p-1 transition-colors duration-150 ${focusRing} ${
+            isCurrentFavorite
+              ? "text-tertiary hover:bg-surface-container-highest"
+              : "text-outline hover:bg-surface-container-highest hover:text-on-surface"
+          }`}
+        >
+          <Star size={13} strokeWidth={1.75} fill={isCurrentFavorite ? "currentColor" : "none"} />
+        </button>
+      )}
       {isThisPC ? (
         <span className="flex items-center gap-1.5 px-1 text-on-surface">
           <Monitor size={14} strokeWidth={1.75} className="text-outline" />
@@ -75,7 +112,7 @@ export function AddressBar({ currentPath, isThisPC, value, onChange, onSubmit, o
       )}
       <button
         type="button"
-        title="Edit path"
+        title="Edit path (Ctrl+L)"
         className={`ml-auto shrink-0 rounded p-1 text-outline transition-colors duration-150 hover:bg-surface-container-highest hover:text-on-surface ${focusRing}`}
         onClick={(e) => {
           e.stopPropagation();

@@ -4,7 +4,7 @@ import { fileExplorerService } from "../services/file-explorer.service";
 import type { AppSettings, StorageInfo } from "../file-explorer.types";
 import type { SortDirection, SortKey } from "../lib/sortEntries";
 import type { GroupBy } from "../lib/groupEntries";
-import type { ViewMode } from "./file-explorer.store";
+import { useFileExplorerStore, type ViewMode } from "./file-explorer.store";
 
 export type StartupBehavior = "this-pc" | "last-folder" | "custom";
 export type SettingsSection = "about" | "appearance" | "general" | "indexing" | "storage" | "guide";
@@ -101,10 +101,24 @@ export const useSettingsStore = create<SettingsState>()(
         }
       },
 
-      setDefaultSortKey: (key) => set({ defaultSortKey: key }),
-      setDefaultSortDirection: (dir) => set({ defaultSortDirection: dir }),
-      setDefaultGroupBy: (groupBy) => set({ defaultGroupBy: groupBy }),
-      setDefaultViewMode: (mode) => set({ defaultViewMode: mode }),
+      // These also push into the live file-explorer store so the change is
+      // visible in the toolbar immediately, not just on the next app launch.
+      setDefaultSortKey: (key) => {
+        set({ defaultSortKey: key, defaultSortDirection: "asc" });
+        useFileExplorerStore.getState().setSortKey(key);
+      },
+      setDefaultSortDirection: (dir) => {
+        set({ defaultSortDirection: dir });
+        useFileExplorerStore.getState().setSortDirection(dir);
+      },
+      setDefaultGroupBy: (groupBy) => {
+        set({ defaultGroupBy: groupBy });
+        useFileExplorerStore.getState().setGroupBy(groupBy);
+      },
+      setDefaultViewMode: (mode) => {
+        set({ defaultViewMode: mode });
+        useFileExplorerStore.getState().setViewMode(mode);
+      },
       setStartupBehavior: (behavior) => set({ startupBehavior: behavior }),
       setStartupPath: (path) => set({ startupPath: path }),
       setTheme: (theme) => set({ theme }),

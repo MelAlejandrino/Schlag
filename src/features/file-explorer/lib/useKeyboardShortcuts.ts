@@ -18,7 +18,6 @@ interface ShortcutHandlers {
   onRename: () => void;
   onDelete: () => void;
   onToggleFavorite: () => void;
-  onTogglePreview: () => void;
   onCopy: () => void;
   onCut: () => void;
   onPaste: () => void;
@@ -81,9 +80,6 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
         // non-obvious; keeping it simple for now).
         e.preventDefault();
         handlers.onNewFolder();
-      } else if (ctrl && e.key === "p") {
-        e.preventDefault();
-        handlers.onTogglePreview();
       } else if (ctrl && e.key === "c") {
         e.preventDefault();
         handlers.onCopy();

@@ -31,8 +31,6 @@ interface EntryKeyboardOptions {
   // EntryGrid passes its rows so ArrowUp/Down can skip header rows
   // when grouping is active.
   gridRows?: GridRow[];
-  // Spacebar handler — toggles the preview pane.
-  onPreview?: () => void;
   // Shift+F10 / the keyboard "Menu" key — opens the same context menu a
   // right-click would, at the focused entry's own position. Without this,
   // "Open with…", "Properties", "Open in new tab", and "Open file location"
@@ -53,7 +51,6 @@ export function useEntryKeyboard({
   scrollRef,
   scrollToEntryRef,
   gridRows,
-  onPreview,
   onContextMenu,
 }: EntryKeyboardOptions) {
   const typeaheadRef = useRef("");
@@ -73,8 +70,6 @@ export function useEntryKeyboard({
   columnsRef.current = columns;
   const gridRowsRef = useRef(gridRows);
   gridRowsRef.current = gridRows;
-  const onPreviewRef = useRef(onPreview);
-  onPreviewRef.current = onPreview;
   const onContextMenuRef = useRef(onContextMenu);
   onContextMenuRef.current = onContextMenu;
 
@@ -323,11 +318,6 @@ export function useEntryKeyboard({
         case "Enter":
           e.preventDefault();
           if (idx >= 0) onOpen(ents[idx]);
-          break;
-
-        case " ":
-          e.preventDefault();
-          onPreviewRef.current?.();
           break;
 
         case "Delete":

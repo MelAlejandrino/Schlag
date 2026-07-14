@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { useMenuKeyboard } from "../lib/useMenuKeyboard";
 import type { GroupBy } from "../lib/groupEntries";
 import type { SortDirection, SortKey } from "../lib/sortEntries";
@@ -74,7 +74,6 @@ function SegmentedRow<T extends string>({ options, active, onChange }: Segmented
 // toggles replaced elsewhere in this app, so it doesn't need a text label to
 // be self-evident.
 function DirectionButton({ direction, onChange }: { direction: SortDirection; onChange: (d: SortDirection) => void }) {
-  const Icon = direction === "asc" ? ArrowUp : ArrowDown;
   const label = direction === "asc" ? "Ascending — click for descending" : "Descending — click for ascending";
   return (
     <button
@@ -84,7 +83,14 @@ function DirectionButton({ direction, onChange }: { direction: SortDirection; on
       className={directionButtonClass}
       onClick={() => onChange(direction === "asc" ? "desc" : "asc")}
     >
-      <Icon size={13} strokeWidth={2} />
+      {/* One icon, rotated — not a ternary between ArrowUp/ArrowDown. Those
+          are different component types, so toggling between them unmounts
+          and remounts the <svg> on every click; if the click landed on the
+          icon itself, e.target is that now-detached node by the time it
+          bubbles to Toolbar's window "click" listener, which reads that as
+          an outside click and closes the whole popup. A real, reproduced bug
+          — rotating one persistent icon can't trigger it. */}
+      <ArrowUp size={13} strokeWidth={2} className={direction === "desc" ? "rotate-180" : ""} />
     </button>
   );
 }

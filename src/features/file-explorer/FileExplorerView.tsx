@@ -10,7 +10,6 @@ import { Toolbar } from "./components/Toolbar";
 import { EntryTable } from "./components/EntryTable";
 import { EntryGrid } from "./components/EntryGrid";
 import { ThisPCView } from "./components/ThisPCView";
-import { PreviewPane } from "./components/PreviewPane";
 import { ContextMenu } from "./components/ContextMenu";
 import { IndexStatusBadge } from "./components/IndexStatusBadge";
 import { PromptModal } from "./components/PromptModal";
@@ -19,6 +18,7 @@ import { SearchModal } from "./components/SearchModal";
 import { SettingsPage } from "./components/SettingsPage";
 import { WindowControls } from "./components/WindowControls";
 import { WindowResizeHandles } from "./components/WindowResizeHandles";
+import { useExclusiveMenu } from "./lib/useExclusiveMenu";
 
 export function FileExplorerView() {
   useTheme();
@@ -33,7 +33,6 @@ export function FileExplorerView() {
     onRename: explorer.renameSelected,
     onDelete: explorer.deleteSelected,
     onToggleFavorite: explorer.toggleCurrentFavorite,
-    onTogglePreview: explorer.togglePreview,
     onCopy: explorer.copySelected,
     onCut: explorer.cutSelected,
     onPaste: explorer.pasteIntoCurrent,
@@ -45,11 +44,10 @@ export function FileExplorerView() {
     onOpenSettings: () => explorer.openSettings(),
     onEscape: () => {
       // A context menu is its own dismissible overlay, same as every modal
-      // in this app — it must take priority over preview/selection, which
-      // it previously didn't (Escape silently did the wrong thing while a
+      // in this app — it must take priority over selection, which it
+      // previously didn't (Escape silently did the wrong thing while a
       // context menu was open, since this handler never checked for one).
       if (explorer.contextMenu) explorer.closeContextMenu();
-      else if (explorer.previewOpen) explorer.togglePreview();
       else explorer.clearSelection();
     },
   });
@@ -64,6 +62,8 @@ export function FileExplorerView() {
       window.removeEventListener("resize", close);
     };
   }, [explorer.contextMenu]);
+
+  useExclusiveMenu(!!explorer.contextMenu, explorer.closeContextMenu);
 
   return (
     <div
@@ -103,8 +103,6 @@ export function FileExplorerView() {
         onOpenSearch={search.openSearch}
         onNewFolder={explorer.newFolder}
         onNewFile={explorer.newFile}
-        previewOpen={explorer.previewOpen}
-        onTogglePreview={explorer.togglePreview}
         viewMode={explorer.viewMode}
         onViewModeChange={explorer.setViewMode}
         sortKey={explorer.sortKey}
@@ -183,7 +181,6 @@ export function FileExplorerView() {
               onSelectRange={explorer.selectRange}
               onDelete={explorer.deleteSelected}
               onRename={explorer.renameSelected}
-              onPreview={explorer.togglePreview}
             />
           ) : (
             <EntryGrid
@@ -206,17 +203,9 @@ export function FileExplorerView() {
               onSelectRange={explorer.selectRange}
               onDelete={explorer.deleteSelected}
               onRename={explorer.renameSelected}
-              onPreview={explorer.togglePreview}
             />
           )}
         </main>
-
-        {explorer.previewOpen && (
-          <PreviewPane
-            entry={explorer.selectedEntries.length === 1 ? explorer.selectedEntries[0] : null}
-            onClose={explorer.togglePreview}
-          />
-        )}
       </div>
 
       {explorer.contextMenu && (

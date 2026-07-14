@@ -138,7 +138,7 @@ function RecentFileRow({ entry, onOpen, onContextMenu }: RecentFileRowProps) {
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onDoubleClick={onOpen}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();

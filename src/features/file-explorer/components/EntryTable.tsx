@@ -46,7 +46,6 @@ interface EntryTableProps {
   onSelectRange: (path: string) => void;
   onDelete: () => void;
   onRename: () => void;
-  onPreview?: () => void;
 }
 
 // Shared between the header and every virtualized row so columns stay
@@ -65,11 +64,10 @@ const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
   { key: "size", label: "Size", align: "right" },
 ];
 
-// Generous fixed estimate — corrected against the real measured height via
-// measureElement below (a long filename can wrap to more than one line, so
-// row height isn't actually uniform). Skipping measureElement here would
-// reproduce the exact scrollbar-thumb bug already documented for EntryGrid
-// (CLAUDE.md's own "Non-obvious gotchas" entry) — same fix, same reason.
+// The real, hard-pinned CSS height of every row (see EntryRow's `height`
+// style and the header row's height below) — not just an estimate. Every row
+// truncates to one line instead of wrapping, so this is exact, and the
+// virtualizer never needs to dynamically remeasure to correct it.
 const HEADER_ROW_SIZE = 33;
 const ENTRY_ROW_SIZE = 33;
 
@@ -136,7 +134,6 @@ export function EntryTable({
   onSelectRange,
   onDelete,
   onRename,
-  onPreview,
 }: EntryTableProps) {
   // Targets the folder being browsed itself — dropping anywhere that isn't
   // a specific row (a row's own drop target, see EntryRow, stops
@@ -154,19 +151,22 @@ export function EntryTable({
     [entries, groupBy],
   );
 
-  // Vertical virtualization — same rationale and mechanics as EntryGrid:
-  // real virtualization (unmounting off-screen rows) is what actually
-  // bounds render/re-render cost in a directory with tens of thousands of
-  // files, not just a visual nicety. measureElement corrects the fixed
-  // estimate against real rendered height (a wrapped long filename is
-  // taller than one line) so getTotalSize()/the scrollbar thumb stays
-  // accurate instead of drifting as new rows scroll into view.
+  // Vertical virtualization — same rationale as EntryGrid (real
+  // virtualization bounds render cost in a directory with tens of thousands
+  // of files). measureElement with Math.round locks every row to its exact
+  // CSS pixel height (33px), avoiding the subpixel drift that made the
+  // scrollbar thumb visibly resize when scrolling through large folders.
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: (i) => (rows[i].kind === "header" ? HEADER_ROW_SIZE : ENTRY_ROW_SIZE),
     overscan: 8,
-    measureElement: (el) => el.getBoundingClientRect().height,
+    // Measure each row but round to the nearest integer — getBoundingClientRect
+    // returns subpixel values (e.g. 32.5px for a 33px row) due to zoom/HiDPI
+    // rounding, and those fractional corrections compound over thousands of
+    // rows into a visibly resizing scrollbar thumb. Rounding locks every
+    // measurement to the exact CSS height, so getTotalSize() is deterministic.
+    measureElement: (el) => Math.round(el.getBoundingClientRect().height),
   });
 
   // Virtualizer-aware scroll-by-path — the hook's default scrollIntoView
@@ -192,7 +192,6 @@ export function EntryTable({
     onRename,
     scrollRef,
     scrollToEntryRef,
-    onPreview,
     onContextMenu,
   });
 
@@ -254,7 +253,7 @@ export function EntryTable({
       role="grid"
       aria-multiselectable="true"
       onKeyDown={entryKeyboard.onKeyDown}
-      className={`themed-scroll flex min-h-0 flex-1 flex-col overflow-y-auto pb-24 transition-colors duration-150 outline-none ${
+      className={`themed-scroll min-h-0 flex-1 overflow-y-auto pb-24 transition-colors duration-150 outline-none ${
         backgroundDrop.isOver ? "bg-surface-container-low" : ""
       }`}
       onClick={(e) => {
@@ -304,9 +303,10 @@ export function EntryTable({
               {row.kind === "header" ? (
                 // A group header is a label, not a real entry — right-clicking
                 // it should act like empty space (the background menu), not
-                // silently do nothing.
+                // silently do nothing. Height pinned to HEADER_ROW_SIZE for
+                // the same reason EntryRow's height is pinned below.
                 <div
-                  className="bg-surface px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-outline"
+                  className="flex h-full items-center overflow-hidden bg-surface px-3 font-mono text-[11px] uppercase tracking-wide text-outline"
                   onClick={() => onClearSelection()}
                   onContextMenu={(e) => {
                     if (!onBackgroundContextMenu) return;
@@ -392,30 +392,39 @@ const EntryRow = memo(function EntryRow({
         onContextMenu(entry, e.clientX, e.clientY);
       }}
       {...dropProps}
-      className={`grid select-none border-b border-surface-container transition-colors duration-150 hover:bg-surface-container ${
+      className={`grid select-none overflow-hidden border-b border-surface-container transition-colors duration-150 hover:bg-surface-container ${
         selected ? "bg-surface-container-high" : ""
       } ${cut ? "opacity-50" : ""} ${
         entry.is_dir && dropTarget.isOver ? "outline-2 -outline-offset-2 outline-primary-container" : ""
       }`}
-      style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS }}
+      // Fixed height (matching ENTRY_ROW_SIZE exactly) — content no longer
+      // wraps (see the name cell's truncate below), so the virtualizer's
+      // measureElement always rounds to exactly 33px, keeping getTotalSize()
+      // deterministic and the scrollbar thumb stable.
+      style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, height: ENTRY_ROW_SIZE }}
     >
-      <div role="gridcell" className="px-3 py-1.5 text-[13px]">
-        <span className={`flex items-start gap-2 ${selected ? "text-primary" : "text-on-surface"}`}>
+      <div role="gridcell" className="flex min-w-0 items-center px-3 text-[13px]">
+        <span className={`flex min-w-0 items-center gap-2 ${selected ? "text-primary" : "text-on-surface"}`}>
           {entry.is_dir ? (
-            <Folder size={15} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" />
+            <Folder size={15} strokeWidth={1.75} className="shrink-0 text-primary" />
           ) : (
-            <FileTypeIcon name={entry.name} size={15} strokeWidth={1.75} className="mt-0.5 shrink-0 text-outline" />
+            <FileTypeIcon name={entry.name} size={15} strokeWidth={1.75} className="shrink-0 text-outline" />
           )}
-          <span className="min-w-0 break-words">{entry.name}</span>
+          <span className="min-w-0 truncate" title={entry.name}>
+            {entry.name}
+          </span>
         </span>
       </div>
-      <div role="gridcell" className="px-3 py-1.5 font-mono text-[12px] text-on-surface-variant">
+      <div role="gridcell" className="flex items-center px-3 font-mono text-[12px] text-on-surface-variant">
         {formatDate(entry.modified_ms)}
       </div>
-      <div role="gridcell" className="px-3 py-1.5 font-mono text-[12px] text-on-surface-variant">
+      <div role="gridcell" className="flex items-center px-3 font-mono text-[12px] text-on-surface-variant">
         {entryTypeLabel(entry)}
       </div>
-      <div role="gridcell" className="px-3 py-1.5 text-right font-mono text-[12px] text-on-surface-variant">
+      <div
+        role="gridcell"
+        className="flex items-center justify-end px-3 text-right font-mono text-[12px] text-on-surface-variant"
+      >
         {formatSize(entry.size, entry.is_dir)}
       </div>
     </div>

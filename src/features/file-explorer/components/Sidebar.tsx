@@ -4,6 +4,7 @@ import { Monitor, Settings, Star, X } from "lucide-react";
 import { basename, longestMatchingPath } from "../lib/path";
 import { useDropTarget } from "../lib/useDropTarget";
 import { useSidebarResize } from "../lib/useSidebarResize";
+import { useExclusiveMenu } from "../lib/useExclusiveMenu";
 import { driveIcon, folderIcon } from "../lib/folderIcon";
 import { THIS_PC } from "../file-explorer.types";
 import type { QuickAccessDir } from "../file-explorer.types";
@@ -70,6 +71,8 @@ export function Sidebar({
       window.removeEventListener("resize", close);
     };
   }, [contextMenu]);
+
+  useExclusiveMenu(!!contextMenu, () => setContextMenu(null));
 
   function openContextMenuFor(path: string, x: number, y: number) {
     setContextMenu({ x, y, path });
