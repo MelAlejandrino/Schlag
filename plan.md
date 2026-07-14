@@ -274,6 +274,7 @@ src-tauri/
 - Create folders
 - Open With: invokes the native OS "Open With" picker (`rundll32 shell32.dll,OpenAs_RunDLL`) rather than a custom app-picker UI.
 - Properties: invokes the native OS Properties dialog (General/Security/Sharing tabs) via a Shell.Application COM call, rather than a reimplemented panel. Revisit as a proper in-app panel in Phase 4 (Preview) if indexed metadata makes a custom "Get Info" card (per DESIGN.md) worthwhile later.
+- **Open Terminal** — not built yet. Opens a terminal at the current folder (Toolbar button + background/folder-row context menu item, matching Explorer's own "Open in Terminal"), same "no clear use case yet" gap `CLAUDE.md` already notes for Sidebar/This PC right-click. **Release gate: required before the first public release, unlike the rest of the not-yet-built items in this list.**
 
 ---
 
@@ -297,7 +298,7 @@ Support:
 
 - PDFs ✅
 - Markdown ✅
-- Text ✅ (plain text, plus a broad set of code/config extensions — same extraction path, since they're just text)
+- Text ✅ (plain text, CSV, plus a broad set of code/config extensions — same extraction path, since they're all just text)
 - Office Documents ✅ (.docx, .xlsx, .pptx — legacy binary .doc/.xls/.ppt deliberately excluded, see CLAUDE.md)
 
 ---
@@ -681,6 +682,8 @@ Polish
 
 Advanced Features
 
+- **Open Terminal — release gate.** Open a terminal at the current folder (Toolbar + context menu). Unlike every other item in this phase, this one blocks the first public release — see the `File Operations` feature list above.
+- **Browse zip contents inline** — not built yet. Double-clicking a `.zip` navigates into it in the main listing (like a folder) instead of just handing off to the OS's default app via `openFile`; today's Archive preview (`read_archive_entries`/`list_archive_entries`, see the `Preview` feature list above) only shows a flat read-only entry list in the preview pane, it doesn't let you actually navigate. Sketched design: a virtual-path scheme (`C:\a\b.zip!\sub\file.txt`, the bare `!` marker sitting inside one path segment) would let `lib/path.ts`'s existing `dirname`/`basename`/`joinPath`/`pathSegments` keep working unmodified for breadcrumbs/up-navigation; `file-explorer.store.ts`'s `loadEntries()` is the single chokepoint every navigate/refresh/back/forward already funnels through, so branching it to call a new `list_archive_dir` command for a zip-virtual path (instead of `list_dir`) would cover navigation for free. Opening a file inside the archive would need a new `extract_zip_entry_to_temp` command (extract-to-temp, then reuse the existing `openFile` flow). Write actions (rename/copy/cut/delete/new folder/paste) don't apply inside a read-only archive — likely handled the same way this project already handles Sidebar/This-PC right-click ("no clear use case yet, don't invent it"): suppress the context menu entirely while browsing a zip, rather than showing disabled-looking buttons.
 - Split panes — side-by-side folder view within the same window
 - Tags — colored/custom tags, multiple tags per file, stored in SQLite
 - Workspace restore — persist and restore tabs, split panes, window size, sidebar state across launches

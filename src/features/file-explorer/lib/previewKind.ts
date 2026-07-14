@@ -9,7 +9,7 @@ const ARCHIVE_EXTENSIONS = ["zip"];
 // markdown/office, which get their own categories above) — anything the
 // backend's extract_text() can already turn into plain text.
 const TEXT_EXTENSIONS = [
-  "txt",
+  "txt", "csv",
   "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "rs", "go", "java", "kt", "swift", "c", "h", "cpp", "hpp", "cs",
   "rb", "php", "sh", "ps1", "sql", "html", "css", "scss", "json", "yaml", "yml", "toml", "xml", "vue", "svelte",
 ];

@@ -38,6 +38,9 @@ const EXTRACTABLE_EXTENSIONS: &[&str] = &[
     // txt/md (see extract_text's dispatch below), just a longer whitelist.
     "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "rs", "go", "java", "kt", "swift", "c", "h", "cpp", "hpp", "cs",
     "rb", "php", "sh", "ps1", "sql", "html", "css", "scss", "json", "yaml", "yml", "toml", "xml", "vue", "svelte",
+    // CSV is delimited plain text too — same fallback arm, no dedicated
+    // parser needed (unlike xlsx, which is a real binary/zip container).
+    "csv",
 ];
 
 pub fn is_extractable(ext: &str) -> bool {
