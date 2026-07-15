@@ -156,7 +156,11 @@ export function useFileExplorer() {
     return [entry.path];
   }, []);
 
-  async function dropOnto(sourcePaths: string[], targetPath: string, isCopy: boolean) {
+  // Stable identity — see openEntry's comment above (EntryTable/EntryGrid's
+  // onDrop, passed straight to EntryRow/EntryTile). Reads via getState()
+  // rather than the closed-over `store`, same reason as every other handler
+  // in this block.
+  const dropOnto = useCallback(async (sourcePaths: string[], targetPath: string, isCopy: boolean) => {
     // This PC has no real folder to move/copy into — guarded here rather
     // than at each call site, since TabBar's drag-to-switch-tabs can now
     // land a drop on a tab that's sitting at THIS_PC.
@@ -164,9 +168,10 @@ export function useFileExplorer() {
     const op = isCopy ? fileExplorerService.copyEntry : fileExplorerService.moveEntry;
     const items = sourcePaths.filter((p) => p !== targetPath && dirname(p) !== targetPath);
     if (items.length === 0) return;
+    const s = useFileExplorerStore.getState();
     try {
       await Promise.all(items.map((p) => op(p, joinPath(targetPath, basename(p)))));
-      store.clearSelection();
+      s.clearSelection();
       // refreshTabsShowing (not just refresh()) since dropping onto another
       // tab (TabBar's drag-to-switch) already made that tab active by the
       // time this runs — a plain refresh() only catches the destination;
@@ -174,11 +179,11 @@ export function useFileExplorer() {
       // refreshing too, or it keeps showing the file until manually
       // refreshed. Skipped for a copy — the source is untouched.
       const affected = new Set(isCopy ? [targetPath] : [targetPath, ...items.map((p) => dirname(p))]);
-      store.refreshTabsShowing([...affected]);
+      s.refreshTabsShowing([...affected]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
     }
-  }
+  }, []);
 
   function newFolder() {
     if (store.currentPath === THIS_PC) return;
