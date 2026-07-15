@@ -669,7 +669,7 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<database::FileRow>, status
     batch.clear();
 }
 
-fn make_row(path: &Path, meta: &fs::Metadata) -> database::FileRow {
+pub(crate) fn make_row(path: &Path, meta: &fs::Metadata) -> database::FileRow {
     let modified_ms = meta
         .modified()
         .ok()

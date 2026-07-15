@@ -1,3 +1,4 @@
+use crate::database;
 use crate::fs_ops::Entry;
 use regex::Regex;
 use rusqlite::{Connection, ToSql};
@@ -175,6 +176,28 @@ fn build_query(query: &str, filters: &SearchFilters, keyword_mode: bool) -> (Str
     (sql, params)
 }
 
+// A folder-scoped search would otherwise depend entirely on the background
+// notify watcher having caught whatever changed in that folder — and
+// indexer.rs's own doc comments already document that a recursive
+// ReadDirectoryChangesW watch over a whole drive can silently drop events
+// under real, ordinary filesystem churn (confirmed live for deletes; a
+// create is lost the same way). A search explicitly scoped to one folder
+// can sidestep that dependency cheaply: re-list just that folder's
+// immediate children (the same cost `list_dir` already pays on every
+// navigation — not a recursive walk) and upsert them right before querying,
+// so a file that's visibly there in Explorer is guaranteed visible to a
+// scoped search too, regardless of whether the watcher caught it.
+fn rescan_folder(conn: &mut Connection, folder: &str) {
+    let Ok(entries) = std::fs::read_dir(folder) else { return };
+    let rows: Vec<database::FileRow> = entries
+        .filter_map(Result::ok)
+        .filter_map(|e| e.metadata().ok().map(|m| crate::indexer::make_row(&e.path(), &m)))
+        .collect();
+    if !rows.is_empty() {
+        let _ = database::upsert_batch(conn, &rows);
+    }
+}
+
 fn run_query(conn: &Connection, query: &str, filters: &SearchFilters, keyword_mode: bool) -> rusqlite::Result<Vec<Entry>> {
     let (sql, params) = build_query(query, filters, keyword_mode);
     let mut stmt = conn.prepare(&sql)?;
@@ -198,7 +221,10 @@ pub fn search_files(
     filters: SearchFilters,
     keyword_mode: bool,
 ) -> Result<Vec<Entry>, String> {
-    let conn = conn.lock().map_err(|e| e.to_string())?;
+    let mut conn = conn.lock().map_err(|e| e.to_string())?;
+    if let Some(folder) = &filters.folder {
+        rescan_folder(&mut conn, folder);
+    }
     run_query(&conn, &query, &filters, keyword_mode).map_err(|e| e.to_string())
 }
 
@@ -463,6 +489,32 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "report.png");
         let _ = std::fs::remove_file(&path);
+    }
+
+    // Reproduces the reported bug directly: a file created outside the app
+    // (VS Code, Explorer) that the background notify watcher never picked up
+    // (simulated here by just never indexing it) must still be found once a
+    // search is scoped to the folder it lives in.
+    #[test]
+    fn folder_scoped_search_rescans_the_folder_so_a_watcher_miss_still_gets_found() {
+        let dir = std::env::temp_dir().join("schlag_test_search_rescan_dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("brand_new.txt"), b"hi").unwrap();
+
+        let db_path = std::env::temp_dir().join("schlag_test_search_rescan.sqlite");
+        let _ = std::fs::remove_file(&db_path);
+        let mut conn = database::open(&db_path).unwrap();
+        // Deliberately never upserted — the index has no idea this file exists yet.
+
+        let filters = SearchFilters { folder: Some(dir.to_string_lossy().into_owned()), ..Default::default() };
+        rescan_folder(&mut conn, &filters.folder.clone().unwrap());
+        let results = run_query(&conn, "brand_new", &filters, false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "brand_new.txt");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     #[test]
