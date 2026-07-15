@@ -13,6 +13,7 @@ import {
   Scissors,
   SquarePlus,
   Star,
+  TerminalSquare,
   Trash2,
 } from "lucide-react";
 import { useMenuKeyboard } from "../lib/useMenuKeyboard";
@@ -38,6 +39,11 @@ interface ContextMenuProps {
   // on whether the prop was passed, since every caller that shows this menu
   // for a folder wants it.
   onOpenInNewTab?: () => void;
+  // Not optional like onOpenLocation/onOpenInNewTab — one handler covers
+  // both the background menu (no selection, targets the current folder) and
+  // the per-entry menu (single folder selected), see useFileExplorer.ts's
+  // openTerminalContextMenu.
+  onOpenTerminal: () => void;
   onRename: () => void;
   onCopy: () => void;
   onCut: () => void;
@@ -68,6 +74,7 @@ export function ContextMenu({
   onOpenWith,
   onOpenLocation,
   onOpenInNewTab,
+  onOpenTerminal,
   onRename,
   onCopy,
   onCut,
@@ -122,6 +129,11 @@ export function ContextMenu({
           Paste
         </button>
         <div className="my-0.5 border-t border-surface-container-highest" />
+        <button role="menuitem" className={itemClass} onClick={onOpenTerminal}>
+          <TerminalSquare {...iconProps} />
+          Open Terminal
+        </button>
+        <div className="my-0.5 border-t border-surface-container-highest" />
         <button role="menuitem" className={itemClass} onClick={onToggleFavorite}>
           <Star {...iconProps} fill={isCurrentFavorite ? "currentColor" : "none"} />
           {isCurrentFavorite ? "Remove from Favorites" : "Add to Favorites"}
@@ -156,6 +168,12 @@ export function ContextMenu({
         <button role="menuitem" className={itemClass} onClick={onOpenLocation} disabled={selectedCount !== 1}>
           <FolderOpen {...iconProps} />
           Open file location
+        </button>
+      )}
+      {selectedIsDir && (
+        <button role="menuitem" className={itemClass} onClick={onOpenTerminal} disabled={selectedCount !== 1}>
+          <TerminalSquare {...iconProps} />
+          Open Terminal
         </button>
       )}
       {!selectedIsDir && (

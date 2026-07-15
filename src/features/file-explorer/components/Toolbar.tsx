@@ -9,6 +9,7 @@ import {
   Plus,
   RotateCw,
   Search,
+  TerminalSquare,
 } from "lucide-react";
 import { AddressBar } from "./AddressBar";
 import { ViewMenu } from "./ViewMenu";
@@ -35,6 +36,7 @@ interface ToolbarProps {
   onAddressSubmit: () => void;
   onNavigate: (path: string) => void;
   onOpenSearch: () => void;
+  onOpenTerminal: () => void;
   onNewFolder: () => void;
   onNewFile: () => void;
   viewMode: ViewMode;
@@ -186,6 +188,7 @@ export function Toolbar({
   onAddressSubmit,
   onNavigate,
   onOpenSearch,
+  onOpenTerminal,
   onNewFolder,
   onNewFile,
   viewMode,
@@ -252,6 +255,16 @@ export function Toolbar({
           onClick={onOpenSearch}
         >
           <Search {...iconProps} />
+        </button>
+
+        <button
+          className={ghostButtonClass}
+          title="Open Terminal"
+          aria-label="Open Terminal"
+          onClick={onOpenTerminal}
+          disabled={isThisPC}
+        >
+          <TerminalSquare {...iconProps} />
         </button>
 
         <div className="mx-1 h-5 w-px bg-surface-container-highest" />

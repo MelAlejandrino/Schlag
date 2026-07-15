@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import type {
   AppSettings,
@@ -42,4 +43,20 @@ export const fileExplorerService = {
   getSettings: () => invoke<AppSettings>("get_settings"),
   updateSettings: (settings: AppSettings) => invoke<AppSettings>("update_settings", { newSettings: settings }),
   getStorageInfo: () => invoke<StorageInfo>("get_storage_info"),
+  // The in-app terminal (terminal.rs) — a real PTY running PowerShell,
+  // rendered by TerminalPanel.tsx via xterm.js. onTerminalOutput/onTerminalExit
+  // wrap `listen()` the same way every invoke() above is wrapped, since Tauri's
+  // event API is also a "Tauri API" per this file's own rule of being the only
+  // place that calls one directly. Both use one fixed event name (not a
+  // dynamic per-session-id name) with the id in the payload, so a caller can
+  // register its listener before it even knows its own session's id — see
+  // useTerminalSession.ts for why that ordering matters.
+  openTerminal: (cwd: string, cols: number, rows: number) => invoke<number>("terminal_open", { cwd, cols, rows }),
+  writeTerminal: (id: number, data: string) => invoke<void>("terminal_write", { id, data }),
+  resizeTerminal: (id: number, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows }),
+  closeTerminal: (id: number) => invoke<void>("terminal_close", { id }),
+  onTerminalOutput: (onData: (id: number, data: string) => void) =>
+    listen<{ id: number; data: string }>("terminal-output", (e) => onData(e.payload.id, e.payload.data)),
+  onTerminalExit: (onExit: (id: number) => void) =>
+    listen<{ id: number }>("terminal-exit", (e) => onExit(e.payload.id)),
 };

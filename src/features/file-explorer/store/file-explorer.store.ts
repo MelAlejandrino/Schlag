@@ -108,6 +108,14 @@ interface FileExplorerState {
   focusAddressBar: number;
   initialized: boolean;
   viewState: "browse" | "settings";
+  // The bottom-docked terminal panel (TerminalPanel.tsx) — terminalCwd is
+  // where the next spawned shell should start; opening it while it's already
+  // open at a different folder respawns a fresh shell there (no "cd" typed
+  // in for you, no tracking of a live session across navigations).
+  terminalOpen: boolean;
+  terminalCwd: string;
+  // Persisted the same lasting-preference way as sidebarWidth.
+  terminalHeight: number;
 
   init: () => Promise<void>;
   openSettings: () => void;
@@ -128,6 +136,9 @@ interface FileExplorerState {
   requestFocusAddress: () => void;
   setAddressInput: (value: string) => void;
   setSidebarWidth: (width: number) => void;
+  openTerminal: (path: string) => void;
+  closeTerminal: () => void;
+  setTerminalHeight: (height: number) => void;
   setSortKey: (key: SortKey) => void;
   setSortDirection: (direction: SortDirection) => void;
   toggleSortDirection: () => void;
@@ -211,6 +222,9 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         deleteTarget: null,
         revealPath: null,
         focusAddressBar: 0,
+        terminalOpen: false,
+        terminalCwd: "",
+        terminalHeight: 260,
         selectedPaths: [],
         selectionAnchor: null,
         initialized: false,
@@ -482,6 +496,9 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         closeSettings: () => set({ viewState: "browse" }),
         setAddressInput: (value: string) => applyTabPatch(get().activeTabId, { addressInput: value }),
         setSidebarWidth: (width: number) => set({ sidebarWidth: width }),
+        openTerminal: (path: string) => set({ terminalOpen: true, terminalCwd: path }),
+        closeTerminal: () => set({ terminalOpen: false }),
+        setTerminalHeight: (height: number) => set({ terminalHeight: height }),
 
         // Always resets to ascending — matches Explorer's own convention of a
         // fresh column always starting ascending, rather than carrying over
@@ -570,6 +587,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
       partialize: (state) => ({
         favorites: state.favorites,
         sidebarWidth: state.sidebarWidth,
+        terminalHeight: state.terminalHeight,
         groupOrder: state.groupOrder,
         currentPath: state.currentPath,
       }),

@@ -96,6 +96,15 @@ export function RecentFiles({ className = "" }: { className?: string }) {
               setRowMenu(null);
               explorer.openEntryWith(rowMenu.entry);
             }}
+            // Recent Files is files-only (see this component's own doc
+            // comment above), so ContextMenu never actually renders this
+            // button here (gated on selectedIsDir, always false) — wired for
+            // type-completeness/consistency with every other explicit-target
+            // action on this row menu, not because it's reachable today.
+            onOpenTerminal={() => {
+              setRowMenu(null);
+              explorer.openTerminal(rowMenu.entry.path);
+            }}
             onRename={() => {
               setRowMenu(null);
               explorer.renameEntry(rowMenu.entry);

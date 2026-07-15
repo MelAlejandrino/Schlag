@@ -233,6 +233,30 @@ export function useFileExplorer() {
     );
   }
 
+  // Toolbar button — always targets the folder actually being browsed,
+  // ignoring whatever's selected (matches Explorer's own toolbar "Open in
+  // Terminal", which never depends on selection). Toggles closed if the
+  // panel is already open at this same folder, rather than always
+  // respawning a fresh shell on repeat clicks.
+  function openTerminalToolbar() {
+    if (store.currentPath === THIS_PC) return;
+    if (store.terminalOpen && store.terminalCwd === store.currentPath) {
+      store.closeTerminal();
+    } else {
+      store.openTerminal(store.currentPath);
+    }
+  }
+
+  // Context menu — shared by both the background (folder-level) menu and a
+  // single selected folder's own row menu. Background right-click clears
+  // selection first (see openBackgroundContextMenu below), so selectedEntries
+  // is empty there and this naturally falls back to the current folder.
+  function openTerminalContextMenu() {
+    const target =
+      selectedEntries.length === 1 && selectedEntries[0].is_dir ? selectedEntries[0].path : store.currentPath;
+    if (target !== THIS_PC) store.openTerminal(target);
+  }
+
   function openBackgroundContextMenu(x: number, y: number) {
     store.clearSelection();
     store.openContextMenu(x, y, true);
@@ -364,6 +388,8 @@ export function useFileExplorer() {
     openBackgroundContextMenu,
     pasteIntoCurrent,
     toggleCurrentFavorite,
+    openTerminalToolbar,
+    openTerminalContextMenu,
     getDragPaths,
     dropOnto,
     newFolder,

@@ -16,6 +16,7 @@ import { PromptModal } from "./components/PromptModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { SearchModal } from "./components/SearchModal";
 import { SettingsPage } from "./components/SettingsPage";
+import { TerminalPanel } from "./components/TerminalPanel";
 import { WindowControls } from "./components/WindowControls";
 import { WindowResizeHandles } from "./components/WindowResizeHandles";
 import { useExclusiveMenu } from "./lib/useExclusiveMenu";
@@ -101,6 +102,7 @@ export function FileExplorerView() {
         onAddressSubmit={() => explorer.navigate(explorer.addressInput)}
         onNavigate={explorer.navigate}
         onOpenSearch={search.openSearch}
+        onOpenTerminal={explorer.openTerminalToolbar}
         onNewFolder={explorer.newFolder}
         onNewFile={explorer.newFile}
         viewMode={explorer.viewMode}
@@ -116,96 +118,100 @@ export function FileExplorerView() {
         focusAddressBar={explorer.focusAddressBar}
       />}
 
-      <div className="flex min-h-0 flex-1">
-        {!explorer.isSettings && (
-          <Sidebar
-            quickAccess={explorer.quickAccess}
-            favorites={explorer.favorites}
-            drives={explorer.drives}
-            currentPath={explorer.currentPath}
-            onNavigate={explorer.navigate}
-            onUnstar={explorer.toggleFavorite}
-            onDrop={explorer.dropOnto}
-            onOpenInNewTab={explorer.newTab}
-            onToggleFavorite={explorer.toggleFavorite}
-            onShowProperties={explorer.showPropertiesForPath}
-            onOpenSettings={explorer.openSettings}
-          />
-        )}
-
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {explorer.error && (
-            <div className="m-3 flex shrink-0 items-start gap-2 rounded-lg border border-error-container bg-error-container/20 px-3 py-2 text-on-error-container">
-              <AlertCircle size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-error" />
-              <span className="min-w-0 flex-1 text-[13px]">{explorer.error}</span>
-              <button
-                onClick={explorer.clearError}
-                className="shrink-0 rounded p-0.5 text-error transition-colors duration-150 hover:bg-error-container/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error"
-                title="Dismiss"
-              >
-                <X size={14} strokeWidth={2} />
-              </button>
-            </div>
-          )}
-
-          {explorer.isSettings ? (
-            <SettingsPage onBack={explorer.closeSettings} />
-          ) : explorer.isThisPC ? (
-            <ThisPCView
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1">
+          {!explorer.isSettings && (
+            <Sidebar
               quickAccess={explorer.quickAccess}
               favorites={explorer.favorites}
               drives={explorer.drives}
+              currentPath={explorer.currentPath}
               onNavigate={explorer.navigate}
+              onUnstar={explorer.toggleFavorite}
               onDrop={explorer.dropOnto}
-            />
-          ) : explorer.viewMode === "list" ? (
-            <EntryTable
-              entries={explorer.entries}
-              selectedPaths={explorer.selectedPaths}
-              currentPath={explorer.currentPath}
-              cutPaths={explorer.cutPaths}
-              revealPath={explorer.revealPath}
-              onRevealed={() => explorer.setRevealPath(null)}
-              onOpen={explorer.openEntry}
-              onSelect={explorer.selectEntry}
-              onContextMenu={explorer.openContextMenuForEntry}
-              onClearSelection={explorer.clearSelection}
-              onDragPaths={explorer.getDragPaths}
-              onDrop={explorer.dropOnto}
-              onBackgroundContextMenu={explorer.openBackgroundContextMenu}
-              sortKey={explorer.sortKey}
-              sortDirection={explorer.sortDirection}
-              onSortColumnClick={explorer.onSortColumnClick}
-              groupBy={explorer.groupBy}
-              onSelectOnly={explorer.selectOnly}
-              onSelectRange={explorer.selectRange}
-              onDelete={explorer.deleteSelected}
-              onRename={explorer.renameSelected}
-            />
-          ) : (
-            <EntryGrid
-              entries={explorer.entries}
-              selectedPaths={explorer.selectedPaths}
-              currentPath={explorer.currentPath}
-              cutPaths={explorer.cutPaths}
-              revealPath={explorer.revealPath}
-              onRevealed={() => explorer.setRevealPath(null)}
-              onOpen={explorer.openEntry}
-              onSelect={explorer.selectEntry}
-              onContextMenu={explorer.openContextMenuForEntry}
-              onClearSelection={explorer.clearSelection}
-              onDragPaths={explorer.getDragPaths}
-              onDrop={explorer.dropOnto}
-              onBackgroundContextMenu={explorer.openBackgroundContextMenu}
-              groupBy={explorer.groupBy}
-              size={explorer.viewMode}
-              onSelectOnly={explorer.selectOnly}
-              onSelectRange={explorer.selectRange}
-              onDelete={explorer.deleteSelected}
-              onRename={explorer.renameSelected}
+              onOpenInNewTab={explorer.newTab}
+              onToggleFavorite={explorer.toggleFavorite}
+              onShowProperties={explorer.showPropertiesForPath}
+              onOpenSettings={explorer.openSettings}
             />
           )}
-        </main>
+
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {explorer.error && (
+              <div className="m-3 flex shrink-0 items-start gap-2 rounded-lg border border-error-container bg-error-container/20 px-3 py-2 text-on-error-container">
+                <AlertCircle size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-error" />
+                <span className="min-w-0 flex-1 text-[13px]">{explorer.error}</span>
+                <button
+                  onClick={explorer.clearError}
+                  className="shrink-0 rounded p-0.5 text-error transition-colors duration-150 hover:bg-error-container/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error"
+                  title="Dismiss"
+                >
+                  <X size={14} strokeWidth={2} />
+                </button>
+              </div>
+            )}
+
+            {explorer.isSettings ? (
+              <SettingsPage onBack={explorer.closeSettings} />
+            ) : explorer.isThisPC ? (
+              <ThisPCView
+                quickAccess={explorer.quickAccess}
+                favorites={explorer.favorites}
+                drives={explorer.drives}
+                onNavigate={explorer.navigate}
+                onDrop={explorer.dropOnto}
+              />
+            ) : explorer.viewMode === "list" ? (
+              <EntryTable
+                entries={explorer.entries}
+                selectedPaths={explorer.selectedPaths}
+                currentPath={explorer.currentPath}
+                cutPaths={explorer.cutPaths}
+                revealPath={explorer.revealPath}
+                onRevealed={() => explorer.setRevealPath(null)}
+                onOpen={explorer.openEntry}
+                onSelect={explorer.selectEntry}
+                onContextMenu={explorer.openContextMenuForEntry}
+                onClearSelection={explorer.clearSelection}
+                onDragPaths={explorer.getDragPaths}
+                onDrop={explorer.dropOnto}
+                onBackgroundContextMenu={explorer.openBackgroundContextMenu}
+                sortKey={explorer.sortKey}
+                sortDirection={explorer.sortDirection}
+                onSortColumnClick={explorer.onSortColumnClick}
+                groupBy={explorer.groupBy}
+                onSelectOnly={explorer.selectOnly}
+                onSelectRange={explorer.selectRange}
+                onDelete={explorer.deleteSelected}
+                onRename={explorer.renameSelected}
+              />
+            ) : (
+              <EntryGrid
+                entries={explorer.entries}
+                selectedPaths={explorer.selectedPaths}
+                currentPath={explorer.currentPath}
+                cutPaths={explorer.cutPaths}
+                revealPath={explorer.revealPath}
+                onRevealed={() => explorer.setRevealPath(null)}
+                onOpen={explorer.openEntry}
+                onSelect={explorer.selectEntry}
+                onContextMenu={explorer.openContextMenuForEntry}
+                onClearSelection={explorer.clearSelection}
+                onDragPaths={explorer.getDragPaths}
+                onDrop={explorer.dropOnto}
+                onBackgroundContextMenu={explorer.openBackgroundContextMenu}
+                groupBy={explorer.groupBy}
+                size={explorer.viewMode}
+                onSelectOnly={explorer.selectOnly}
+                onSelectRange={explorer.selectRange}
+                onDelete={explorer.deleteSelected}
+                onRename={explorer.renameSelected}
+              />
+            )}
+          </main>
+        </div>
+
+        {explorer.terminalOpen && !explorer.isSettings && <TerminalPanel />}
       </div>
 
       {explorer.contextMenu && (
@@ -219,6 +225,7 @@ export function FileExplorerView() {
           onOpen={explorer.openSelected}
           onOpenWith={explorer.openWithSelected}
           onOpenInNewTab={explorer.openSelectedInNewTab}
+          onOpenTerminal={explorer.openTerminalContextMenu}
           onRename={explorer.renameSelected}
           onCopy={explorer.copySelected}
           onCut={explorer.cutSelected}

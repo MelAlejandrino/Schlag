@@ -394,6 +394,7 @@ export function SearchModal() {
             onOpen={() => withMenuClosed(() => search.openResult(resultMenu.item))}
             onOpenLocation={() => withSearchClosedToo(() => explorer.openFileLocation(resultMenu.item))}
             onOpenWith={() => withMenuClosed(() => explorer.openEntryWith(resultMenu.item))}
+            onOpenTerminal={() => withSearchClosedToo(() => explorer.openTerminal(resultMenu.item.path))}
             onRename={() => withSearchClosedToo(() => explorer.renameEntry(resultMenu.item))}
             onCopy={() => withMenuClosed(() => explorer.copyEntryToClipboard(resultMenu.item))}
             onCut={() => withMenuClosed(() => explorer.cutEntryToClipboard(resultMenu.item))}

@@ -5,6 +5,7 @@ mod indexer;
 mod preview;
 mod search;
 mod settings;
+mod terminal;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -59,6 +60,7 @@ pub fn run() {
             let status = indexer::spawn(db_path, drives, content_index, content_schema, content_tx.clone(), content_rx);
             app.manage(content_tx);
             app.manage(status);
+            app.manage(terminal::TerminalManager::default());
 
             Ok(())
         })
@@ -85,6 +87,10 @@ pub fn run() {
             settings::get_settings,
             settings::update_settings,
             settings::get_storage_info,
+            terminal::terminal_open,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
