@@ -7,6 +7,7 @@ import type { PromptKind } from "../lib/promptConfig";
 import { sortEntries, type SortDirection, type SortKey } from "../lib/sortEntries";
 import { compareGroupKeys, groupKeyFor, type GroupBy } from "../lib/groupEntries";
 import { createTab, nextActiveTabId, reorderTabs, type Tab } from "../lib/tabs";
+import { zipSplit } from "../lib/zipPath";
 import {
   THIS_PC,
   type ClipboardOp,
@@ -18,9 +19,15 @@ import {
 
 export type ViewMode = "list" | "medium" | "large";
 
-// This PC has no real directory listing — everything else does.
+// This PC has no real directory listing — everything else does. A zip's own
+// virtual path (lib/zipPath.ts) branches to the archive-listing command
+// instead of the real filesystem one; every navigate/refresh/back/forward
+// already funnels through this one function, so that's the only branch
+// needed for zip-browsing to work everywhere navigation already does.
 function loadEntries(path: string): Promise<Entry[]> {
-  return path === THIS_PC ? Promise.resolve([]) : fileExplorerService.listDir(path);
+  if (path === THIS_PC) return Promise.resolve([]);
+  const zip = zipSplit(path);
+  return zip ? fileExplorerService.listArchiveDir(zip.archivePath, zip.innerPath) : fileExplorerService.listDir(path);
 }
 
 // Sort, then (if grouping) a second stable sort by group key — JS's

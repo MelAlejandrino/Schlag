@@ -90,6 +90,7 @@ export function FileExplorerView() {
         canGoForward={explorer.canGoForward}
         canGoUp={!explorer.isThisPC}
         isThisPC={explorer.isThisPC}
+        insideZip={explorer.insideZip}
         isCurrentFavorite={explorer.isCurrentFavorite}
         currentPath={explorer.currentPath}
         addressInput={explorer.addressInput}

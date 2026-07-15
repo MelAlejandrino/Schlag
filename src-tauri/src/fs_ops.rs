@@ -65,6 +65,18 @@ pub fn quick_access_dirs() -> Vec<QuickAccessDir> {
         .collect()
 }
 
+// Folders before files, then case-insensitive name — shared by list_dir and
+// preview.rs's read_archive_dir (a zip's own listing), so a real folder and
+// a zip's synthesized one always agree on order rather than drifting if one
+// gets a future tweak (a natural/numeric sort, say) and the other doesn't.
+pub fn sort_folders_first(entries: &mut [Entry]) {
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+}
+
 #[tauri::command]
 pub fn list_dir(path: String) -> Result<Vec<Entry>, String> {
     let mut entries: Vec<Entry> = fs::read_dir(&path)
@@ -88,11 +100,7 @@ pub fn list_dir(path: String) -> Result<Vec<Entry>, String> {
         })
         .collect();
 
-    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-    });
+    sort_folders_first(&mut entries);
 
     Ok(entries)
 }

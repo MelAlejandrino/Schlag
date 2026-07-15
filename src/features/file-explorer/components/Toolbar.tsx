@@ -24,6 +24,9 @@ interface ToolbarProps {
   canGoForward: boolean;
   canGoUp: boolean;
   isThisPC: boolean;
+  // A zip is read-only browsing — New/Terminal don't apply inside one, same
+  // "hide/disable, don't invent" call already made for isThisPC.
+  insideZip: boolean;
   isCurrentFavorite: boolean;
   currentPath: string;
   addressInput: string;
@@ -176,6 +179,7 @@ export function Toolbar({
   canGoForward,
   canGoUp,
   isThisPC,
+  insideZip,
   isCurrentFavorite,
   currentPath,
   addressInput,
@@ -262,7 +266,7 @@ export function Toolbar({
           title="Open Terminal"
           aria-label="Open Terminal"
           onClick={onOpenTerminal}
-          disabled={isThisPC}
+          disabled={isThisPC || insideZip}
         >
           <TerminalSquare {...iconProps} />
         </button>
@@ -277,7 +281,7 @@ export function Toolbar({
           aria-haspopup="menu"
           aria-expanded={!!newMenu.anchor}
           onClick={newMenu.toggle}
-          disabled={isThisPC}
+          disabled={isThisPC || insideZip}
         >
           <Plus {...iconProps} />
         </button>

@@ -16,6 +16,14 @@ export const fileExplorerService = {
   quickAccessDirs: () => invoke<QuickAccessDir[]>("quick_access_dirs"),
   listDrives: () => invoke<QuickAccessDir[]>("list_drives"),
   listDir: (path: string) => invoke<Entry[]>("list_dir", { path }),
+  // Browsing/opening inside a zip (see lib/zipPath.ts) — archivePath/innerPath
+  // are Tauri command *parameter* names, so (unlike SearchFilters' own
+  // snake_case struct fields) they're camelCased at the IPC boundary same as
+  // keywordMode above, even though the Rust side is snake_case.
+  listArchiveDir: (archivePath: string, innerPath: string) =>
+    invoke<Entry[]>("list_archive_dir", { archivePath, innerPath }),
+  extractZipEntry: (archivePath: string, innerPath: string) =>
+    invoke<string>("extract_zip_entry_to_temp", { archivePath, innerPath }),
   openFile: (path: string) => openPath(path),
   openUrl: (url: string) => openUrl(url),
   createDir: (path: string) => invoke<void>("create_dir", { path }),

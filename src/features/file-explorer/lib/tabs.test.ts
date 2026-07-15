@@ -96,4 +96,8 @@ describe("tabLabel", () => {
   it("shows the drive letter itself for a bare drive root", () => {
     expect(tabLabel("C:\\")).toBe("C:");
   });
+
+  it("strips the zip marker from a tab browsing an archive's root", () => {
+    expect(tabLabel("C:\\a\\b.zip!")).toBe("b.zip");
+  });
 });

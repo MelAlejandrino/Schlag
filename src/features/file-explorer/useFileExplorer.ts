@@ -4,6 +4,7 @@ import { useFileExplorerStore } from "./store/file-explorer.store";
 import { basename, dirname, joinPath } from "./lib/path";
 import { getPromptConfig } from "./lib/promptConfig";
 import type { SortKey } from "./lib/sortEntries";
+import { isInsideZip, zipRootPath, zipSplit } from "./lib/zipPath";
 import { THIS_PC, type Entry } from "./file-explorer.types";
 
 interface SelectModifiers {
@@ -18,6 +19,14 @@ export function useFileExplorer() {
   // overlay (SearchModal) with its own open/select/navigate handling, so
   // selection here only ever needs to track the current folder's entries.
   const selectedEntries = store.entries.filter((e) => store.selectedPaths.includes(e.path));
+  // Derived once per render, same as selectedEntries above, and reused by
+  // every plain-function write-action guard below — a zip is read-only
+  // browsing (plan.md's Phase 7 sketch). The useCallback handlers further
+  // down (openContextMenuForEntry, dropOnto, openTerminalContextMenu) each
+  // check a *different* path (a fresh getState().currentPath, a drop target,
+  // a selected folder) than this hook-render's own currentPath, so they
+  // still call isInsideZip() directly rather than closing over this value.
+  const insideZip = isInsideZip(store.currentPath);
 
   useEffect(() => {
     store.init();
@@ -35,9 +44,26 @@ export function useFileExplorer() {
   const openEntry = useCallback((entry: Entry) => {
     if (entry.is_dir) {
       useFileExplorerStore.getState().navigate(entry.path);
-    } else {
-      fileExplorerService.openFile(entry.path).catch((e) => useFileExplorerStore.setState({ error: String(e) }));
+      return;
     }
+    // A file already inside a zip: extract it to a temp file, then reuse
+    // the normal openFile flow on that real path — no separate "open from
+    // memory" plumbing needed. A real .zip file's own row (not yet inside
+    // one): browse into it in-app instead of handing off to the OS, same as
+    // double-clicking a folder.
+    const zip = zipSplit(entry.path);
+    if (zip) {
+      fileExplorerService
+        .extractZipEntry(zip.archivePath, zip.innerPath)
+        .then((tempPath) => fileExplorerService.openFile(tempPath))
+        .catch((e) => useFileExplorerStore.setState({ error: String(e) }));
+      return;
+    }
+    if (entry.name.toLowerCase().endsWith(".zip")) {
+      useFileExplorerStore.getState().navigate(zipRootPath(entry.path));
+      return;
+    }
+    fileExplorerService.openFile(entry.path).catch((e) => useFileExplorerStore.setState({ error: String(e) }));
   }, []);
 
   function openSelected() {
@@ -136,6 +162,7 @@ export function useFileExplorer() {
   // onContextMenu).
   const openContextMenuForEntry = useCallback((entry: Entry, x: number, y: number) => {
     const s = useFileExplorerStore.getState();
+    if (isInsideZip(s.currentPath)) return;
     s.ensureSelected(entry.path);
     s.openContextMenu(x, y);
   }, []);
@@ -163,10 +190,15 @@ export function useFileExplorer() {
   const dropOnto = useCallback(async (sourcePaths: string[], targetPath: string, isCopy: boolean) => {
     // This PC has no real folder to move/copy into — guarded here rather
     // than at each call site, since TabBar's drag-to-switch-tabs can now
-    // land a drop on a tab that's sitting at THIS_PC.
-    if (targetPath === THIS_PC) return;
+    // land a drop on a tab that's sitting at THIS_PC. A zip is read-only
+    // browsing, same reason.
+    if (targetPath === THIS_PC || isInsideZip(targetPath)) return;
     const op = isCopy ? fileExplorerService.copyEntry : fileExplorerService.moveEntry;
-    const items = sourcePaths.filter((p) => p !== targetPath && dirname(p) !== targetPath);
+    // A row inside a zip is still draggable (no "is this row read-only"
+    // concept at the drag layer) — filter its virtual path out here rather
+    // than teaching every drop target about zips, same as the THIS_PC/
+    // self-drop filters already on this line.
+    const items = sourcePaths.filter((p) => p !== targetPath && dirname(p) !== targetPath && !isInsideZip(p));
     if (items.length === 0) return;
     const s = useFileExplorerStore.getState();
     try {
@@ -185,13 +217,16 @@ export function useFileExplorer() {
     }
   }, []);
 
+  // A zip is read-only browsing — no write action applies inside one, same
+  // "no clear use case, don't invent disabled-looking buttons" call this
+  // project already made for Sidebar/This-PC right-click.
   function newFolder() {
-    if (store.currentPath === THIS_PC) return;
+    if (store.currentPath === THIS_PC || insideZip) return;
     store.openPrompt("new-folder");
   }
 
   function newFile() {
-    if (store.currentPath === THIS_PC) return;
+    if (store.currentPath === THIS_PC || insideZip) return;
     store.openPrompt("new-file");
   }
 
@@ -199,11 +234,12 @@ export function useFileExplorer() {
   // entry it's for (store.promptTarget) instead of relying on the ambient
   // selection — see confirmPrompt/getPromptConfig's `promptEntries` below.
   function renameEntry(entry: Entry) {
+    if (isInsideZip(entry.path)) return;
     store.openPrompt("rename", entry);
   }
 
   function renameSelected() {
-    if (selectedEntries.length !== 1) return;
+    if (selectedEntries.length !== 1 || insideZip) return;
     store.openPrompt("rename");
   }
 
@@ -212,11 +248,12 @@ export function useFileExplorer() {
   // instead, mirroring the OS's own copy/paste mental model; pasting happens
   // via the background context menu in whichever folder the user browses to.
   function copyEntryToClipboard(entry: Entry) {
+    if (isInsideZip(entry.path)) return;
     store.setClipboard([entry.path], "copy");
   }
 
   function copySelected() {
-    if (selectedEntries.length === 0) return;
+    if (selectedEntries.length === 0 || insideZip) return;
     store.setClipboard(
       selectedEntries.map((e) => e.path),
       "copy",
@@ -227,11 +264,12 @@ export function useFileExplorer() {
   // mechanism as Copy, differentiated only by op and by clearing the
   // clipboard once the paste actually moves the source away.
   function cutEntryToClipboard(entry: Entry) {
+    if (isInsideZip(entry.path)) return;
     store.setClipboard([entry.path], "cut");
   }
 
   function cutSelected() {
-    if (selectedEntries.length === 0) return;
+    if (selectedEntries.length === 0 || insideZip) return;
     store.setClipboard(
       selectedEntries.map((e) => e.path),
       "cut",
@@ -244,7 +282,7 @@ export function useFileExplorer() {
   // panel is already open at this same folder, rather than always
   // respawning a fresh shell on repeat clicks.
   function openTerminalToolbar() {
-    if (store.currentPath === THIS_PC) return;
+    if (store.currentPath === THIS_PC || insideZip) return;
     if (store.terminalOpen && store.terminalCwd === store.currentPath) {
       store.closeTerminal();
     } else {
@@ -259,10 +297,15 @@ export function useFileExplorer() {
   function openTerminalContextMenu() {
     const target =
       selectedEntries.length === 1 && selectedEntries[0].is_dir ? selectedEntries[0].path : store.currentPath;
-    if (target !== THIS_PC) store.openTerminal(target);
+    if (target !== THIS_PC && !isInsideZip(target)) store.openTerminal(target);
   }
 
+  // No context menu at all while browsing a zip — matches plan.md's own
+  // sketch for this feature: a zip is read-only, so every item this menu
+  // would show (New/Paste/Rename/Delete/Cut/Copy) is a dead-looking action
+  // with no clear use case, same call already made for Sidebar/This-PC.
   function openBackgroundContextMenu(x: number, y: number) {
+    if (insideZip) return;
     store.clearSelection();
     store.openContextMenu(x, y, true);
   }
@@ -273,7 +316,7 @@ export function useFileExplorer() {
 
   async function pasteIntoCurrent() {
     const clip = store.clipboard;
-    if (!clip || store.currentPath === THIS_PC) return;
+    if (!clip || store.currentPath === THIS_PC || insideZip) return;
 
     // A cut pasted back into the folder it's already in isn't a move at all
     // — nothing to do. (A copy pasted into its own folder is still a real
@@ -337,11 +380,12 @@ export function useFileExplorer() {
   const promptConfig = store.activePrompt ? getPromptConfig(store.activePrompt, { selectedEntries: promptEntries }) : null;
 
   function deleteEntryPrompt(entry: Entry) {
+    if (isInsideZip(entry.path)) return;
     store.openDeleteConfirm([entry]);
   }
 
   function deleteSelected() {
-    if (selectedEntries.length === 0) return;
+    if (selectedEntries.length === 0 || insideZip) return;
     store.openDeleteConfirm();
   }
 
@@ -376,9 +420,13 @@ export function useFileExplorer() {
     isThisPC: store.currentPath === THIS_PC,
     isSettings: store.viewState === "settings",
     isCurrentFavorite: store.favorites.includes(store.currentPath),
+    // A zip is read-only browsing (plan.md's Phase 7 sketch) — Toolbar/
+    // ContextMenu use this to hide/disable write actions the same way they
+    // already do for isThisPC.
+    insideZip,
     selectedEntries,
     selectedIsDir: selectedEntries.length === 1 && selectedEntries[0].is_dir,
-    canPaste: store.clipboard !== null && store.currentPath !== THIS_PC,
+    canPaste: store.clipboard !== null && store.currentPath !== THIS_PC && !insideZip,
     cutPaths: store.clipboard?.op === "cut" ? store.clipboard.paths : [],
     onSortColumnClick,
     deleteMessage,

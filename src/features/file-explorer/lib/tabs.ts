@@ -1,4 +1,5 @@
 import { basename } from "./path";
+import { stripZipMarkerSuffix } from "./zipPath";
 import { THIS_PC, type Entry } from "../file-explorer.types";
 
 // The per-tab slice of navigation/selection state — everything that used to
@@ -78,5 +79,5 @@ export function reorderTabs(tabs: Tab[], draggedId: string, targetId: string, in
 // costs nothing to be defensive here).
 export function tabLabel(currentPath: string): string {
   if (currentPath === THIS_PC) return "This PC";
-  return basename(currentPath) || currentPath;
+  return stripZipMarkerSuffix(basename(currentPath) || currentPath);
 }

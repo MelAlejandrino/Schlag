@@ -6,6 +6,7 @@ import { useDropTarget } from "../lib/useDropTarget";
 import { useSidebarResize } from "../lib/useSidebarResize";
 import { useExclusiveMenu } from "../lib/useExclusiveMenu";
 import { driveIcon, folderIcon } from "../lib/folderIcon";
+import { stripZipMarkerSuffix } from "../lib/zipPath";
 import { THIS_PC } from "../file-explorer.types";
 import type { QuickAccessDir } from "../file-explorer.types";
 import { SidebarContextMenu } from "./SidebarContextMenu";
@@ -288,7 +289,7 @@ function FavoriteItem({ path, active, onNavigate, onUnstar, onDrop, onContextMen
         onClick={() => onNavigate(path)}
         className={`min-w-0 flex-1 truncate py-1.5 text-left text-[13px] ${focusRing}`}
       >
-        {basename(path)}
+        {stripZipMarkerSuffix(basename(path))}
       </button>
       <button
         title="Remove favorite"

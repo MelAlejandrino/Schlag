@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Monitor, MoreHorizontal, Pencil, Star } from "lucide-react";
 import { useBreadcrumbOverflow } from "../lib/useBreadcrumbOverflow";
+import { stripZipMarkerSuffix } from "../lib/zipPath";
 
 interface AddressBarProps {
   currentPath: string;
@@ -143,7 +144,7 @@ function Breadcrumbs({ path, onNavigate }: BreadcrumbsProps) {
       >
         {segments.map((s) => (
           <span key={s.path} className="px-1">
-            {s.label}
+            {stripZipMarkerSuffix(s.label)}
           </span>
         ))}
         <span className="px-1">…</span>
@@ -178,7 +179,7 @@ function Breadcrumbs({ path, onNavigate }: BreadcrumbsProps) {
                 onNavigate(s.path);
               }}
             >
-              {s.label}
+              {stripZipMarkerSuffix(s.label)}
             </button>
           ))}
         </div>
@@ -194,7 +195,7 @@ function Breadcrumbs({ path, onNavigate }: BreadcrumbsProps) {
               onNavigate(segment.path);
             }}
           >
-            {segment.label}
+            {stripZipMarkerSuffix(segment.label)}
           </button>
         </span>
       ))}
