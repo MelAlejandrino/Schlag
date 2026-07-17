@@ -205,25 +205,24 @@ export function SearchFiltersFields({ filters, onChange, folderSuggestions }: Se
         </label>
       </div>
 
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <DateRangeFilter
-            afterMs={filters.modified_after_ms}
-            beforeMs={filters.modified_before_ms}
-            onChange={(after, before) =>
-              onChange({ ...filters, modified_after_ms: after, modified_before_ms: before })
-            }
-          />
-        </div>
-        <label className="flex flex-1 flex-col gap-1">
-          <span className={labelClass}>Regex</span>
-          <input
-            className={fieldClass}
-            placeholder="^report_\d+"
-            value={filters.regex ?? ""}
-            onChange={(e) => set("regex", e.currentTarget.value || undefined)}
-          />
-        </label>
+      <label className="flex flex-col gap-1">
+        <span className={labelClass}>Regex</span>
+        <input
+          className={fieldClass}
+          placeholder="^report_\d+"
+          value={filters.regex ?? ""}
+          onChange={(e) => set("regex", e.currentTarget.value || undefined)}
+        />
+      </label>
+
+      <div className="flex flex-col gap-1.5">
+        <DateRangeFilter
+          afterMs={filters.modified_after_ms}
+          beforeMs={filters.modified_before_ms}
+          onChange={(after, before) =>
+            onChange({ ...filters, modified_after_ms: after, modified_before_ms: before })
+          }
+        />
       </div>
     </div>
   );

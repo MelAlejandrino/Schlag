@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { AlertCircle, X } from "lucide-react";
 import { useFileExplorer } from "./useFileExplorer";
-import { useSearch } from "./useSearch";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
 import { useTheme } from "./lib/useTheme";
 import { Sidebar } from "./components/Sidebar";
@@ -15,7 +14,6 @@ import { ContextMenu } from "./components/ContextMenu";
 import { IndexStatusBadge } from "./components/IndexStatusBadge";
 import { PromptModal } from "./components/PromptModal";
 import { ConfirmModal } from "./components/ConfirmModal";
-import { SearchModal } from "./components/SearchModal";
 import { SettingsPage } from "./components/SettingsPage";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { WindowControls } from "./components/WindowControls";
@@ -25,11 +23,10 @@ import { useExclusiveMenu } from "./lib/useExclusiveMenu";
 export function FileExplorerView() {
   useTheme();
   const explorer = useFileExplorer();
-  const search = useSearch();
 
   useKeyboardShortcuts({
     onRefresh: explorer.refresh,
-    onOpenSearch: search.openSearch,
+    onFocusFilter: explorer.requestFocusFilter,
     onNewFolder: explorer.newFolder,
     onNewFile: explorer.newFile,
     onRename: explorer.renameSelected,
@@ -103,7 +100,6 @@ export function FileExplorerView() {
         onAddressChange={explorer.setAddressInput}
         onAddressSubmit={() => explorer.navigate(explorer.addressInput)}
         onNavigate={explorer.navigate}
-        onOpenSearch={search.openSearch}
         onOpenTerminal={explorer.openTerminalToolbar}
         onNewFolder={explorer.newFolder}
         onNewFile={explorer.newFile}
@@ -138,7 +134,7 @@ export function FileExplorerView() {
             />
           )}
 
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             {explorer.error && (
               <div className="m-3 flex shrink-0 items-start gap-2 rounded-lg border border-error-container bg-error-container/20 px-3 py-2 text-on-error-container">
                 <AlertCircle size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-error" />
@@ -163,10 +159,8 @@ export function FileExplorerView() {
                 onNavigate={explorer.navigate}
                 onDrop={explorer.dropOnto}
               />
-            ) : (
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                {explorer.viewMode === "list" ? (
-                  <EntryTable
+            ) : explorer.viewMode === "list" ? (
+              <EntryTable
                     entries={explorer.visibleEntries}
                     selectedPaths={explorer.selectedPaths}
                     currentPath={explorer.currentPath}
@@ -208,19 +202,12 @@ export function FileExplorerView() {
                     size={explorer.viewMode}
                     onSelectOnly={explorer.selectOnly}
                     onSelectRange={explorer.selectRange}
-                    onDelete={explorer.deleteSelected}
-                    onRename={explorer.renameSelected}
-                  />
-                )}
-                <FilterBar
-                  query={explorer.filterQuery}
-                  onChange={explorer.setFilterQuery}
-                  matchCount={explorer.visibleEntries.length}
-                  totalCount={explorer.entries.length}
-                  currentPath={explorer.currentPath}
-                />
-              </div>
+                onDelete={explorer.deleteSelected}
+                onRename={explorer.renameSelected}
+              />
             )}
+
+            {!explorer.isSettings && !explorer.terminalOpen && <FilterBar />}
           </main>
         </div>
 
@@ -269,8 +256,6 @@ export function FileExplorerView() {
           onCancel={explorer.closeDeleteConfirm}
         />
       )}
-
-      <SearchModal />
 
       <IndexStatusBadge />
 

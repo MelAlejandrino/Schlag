@@ -12,7 +12,7 @@ function isTextInput(e: globalThis.KeyboardEvent): boolean {
 
 interface ShortcutHandlers {
   onRefresh: () => void;
-  onOpenSearch: () => void;
+  onFocusFilter: () => void;
   onNewFolder: () => void;
   onNewFile: () => void;
   onRename: () => void;
@@ -38,10 +38,19 @@ interface ShortcutHandlers {
 export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
   useEffect(() => {
     function onKeyDown(e: globalThis.KeyboardEvent) {
+      const ctrl = e.ctrlKey || e.metaKey;
+
+      // Ctrl+F — opens the floating local filter. Handled before every guard
+      // below (text-input focus, open modal/search) and always preventDefault'd
+      // so the webview's own Find bar never opens.
+      if (ctrl && e.key === "f") {
+        e.preventDefault();
+        handlers.onFocusFilter();
+        return;
+      }
+
       // Never fire inside text inputs — the user is typing.
       if (isTextInput(e)) return;
-
-      const ctrl = e.ctrlKey || e.metaKey;
 
       // Ctrl+Tab / Ctrl+Shift+Tab — switch tabs, always active even
       // when a modal is open (matches browser convention).
@@ -63,9 +72,6 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
       } else if (ctrl && e.key === "r") {
         e.preventDefault();
         handlers.onRefresh();
-      } else if (ctrl && e.key === "f") {
-        e.preventDefault();
-        handlers.onOpenSearch();
       } else if (e.key === "F2") {
         e.preventDefault();
         handlers.onRename();

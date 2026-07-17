@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   Plus,
   RotateCw,
-  Search,
   TerminalSquare,
 } from "lucide-react";
 import { AddressBar } from "./AddressBar";
@@ -38,7 +37,6 @@ interface ToolbarProps {
   onAddressChange: (value: string) => void;
   onAddressSubmit: () => void;
   onNavigate: (path: string) => void;
-  onOpenSearch: () => void;
   onOpenTerminal: () => void;
   onNewFolder: () => void;
   onNewFile: () => void;
@@ -191,7 +189,6 @@ export function Toolbar({
   onAddressChange,
   onAddressSubmit,
   onNavigate,
-  onOpenSearch,
   onOpenTerminal,
   onNewFolder,
   onNewFile,
@@ -252,15 +249,6 @@ export function Toolbar({
       />
 
       <div className="flex shrink-0 items-center gap-0.5">
-        <button
-          className={ghostButtonClass}
-          title="Search files and content (Ctrl+F)"
-          aria-label="Search files and content"
-          onClick={onOpenSearch}
-        >
-          <Search {...iconProps} />
-        </button>
-
         <button
           className={ghostButtonClass}
           title="Open Terminal"

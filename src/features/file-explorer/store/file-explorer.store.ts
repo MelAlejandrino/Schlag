@@ -119,6 +119,9 @@ interface FileExplorerState {
   // shift-click ranges only ever span the *visible* rows, not hidden ones.
   filterQuery: string;
   focusAddressBar: number;
+  // A one-shot "open the floating local filter and focus it" signal, bumped
+  // by Ctrl+F (same counter pattern as focusAddressBar). FilterBar watches it.
+  focusFilter: number;
   initialized: boolean;
   viewState: "browse" | "settings";
   // The bottom-docked terminal panel (TerminalPanel.tsx) — terminalCwd is
@@ -148,6 +151,7 @@ interface FileExplorerState {
   setRevealPath: (path: string | null) => void;
   setFilterQuery: (query: string) => void;
   requestFocusAddress: () => void;
+  requestFocusFilter: () => void;
   setAddressInput: (value: string) => void;
   setSidebarWidth: (width: number) => void;
   openTerminal: (path: string) => void;
@@ -237,6 +241,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         revealPath: null,
         filterQuery: "",
         focusAddressBar: 0,
+        focusFilter: 0,
         terminalOpen: false,
         terminalCwd: "",
         terminalHeight: 260,
@@ -508,6 +513,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         setRevealPath: (path: string | null) => set({ revealPath: path }),
         setFilterQuery: (query: string) => set({ filterQuery: query }),
         requestFocusAddress: () => set({ focusAddressBar: get().focusAddressBar + 1 }),
+        requestFocusFilter: () => set({ focusFilter: get().focusFilter + 1 }),
         openSettings: () => set({ viewState: "settings" }),
         closeSettings: () => set({ viewState: "browse" }),
         setAddressInput: (value: string) => applyTabPatch(get().activeTabId, { addressInput: value }),
