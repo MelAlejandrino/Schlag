@@ -86,6 +86,7 @@ export function FileTypeIcon({ name, size, strokeWidth = 1.5, className }: FileT
         width={size}
         height={size}
         alt=""
+        draggable={false}
         loading="lazy"
         decoding="async"
         className={`shrink-0 ${className ?? ""}`}

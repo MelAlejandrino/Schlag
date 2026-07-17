@@ -7,6 +7,15 @@ const DND_MIME = "application/x-schlag-paths";
 const TAB_DND_MIME = "application/x-schlag-tab-id";
 
 export function startDrag(e: DragEvent, paths: string[]) {
+  // Nuke the browser's auto-populated drag data first. A row contains an
+  // <img> file-type icon, so the browser stuffs that SVG's URL into
+  // text/uri-list + text/html — which is all an external app (Chrome, and
+  // thus Google Drive) sees, since it doesn't understand DND_MIME. Dropping
+  // out therefore "uploaded" the icon SVG instead of the file. We can't hand
+  // a real OS file to another app from the webview, so clear it: an external
+  // drop now yields nothing rather than a bogus SVG. In-app drops read
+  // DND_MIME and are unaffected.
+  e.dataTransfer.clearData();
   e.dataTransfer.setData(DND_MIME, JSON.stringify(paths));
   e.dataTransfer.effectAllowed = "copyMove";
 }

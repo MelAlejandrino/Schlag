@@ -426,6 +426,7 @@ const EntryTile = memo(function EntryTile({
         <img
           src={fileExplorerService.assetUrl(entry.path)}
           alt=""
+          draggable={false}
           loading="lazy"
           decoding="async"
           onError={() => setImageFailed(true)}

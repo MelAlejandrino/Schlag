@@ -142,6 +142,20 @@ body {
   overflow: hidden;
 }
 
+/* Global backstop against dragging a file out to another app (Chrome/Google
+   Drive). When an <img> is the drag source, Chromium puts the actual image
+   BYTES in the drag store — which Google Drive then uploads — and clearData()
+   can't reliably strip that binary item. -webkit-user-drag:none stops any
+   img/svg from ever being a drag source at the engine level (stronger than
+   the HTML draggable={false} attr, which Chromium doesn't always honor for
+   the contribute-to-a-parent-drag path). In-app drag is unaffected: it starts
+   from the row/tile <div>, not the image, and carries our private MIME. */
+img,
+svg {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
 .themed-scroll {
   scrollbar-width: thin;
   scrollbar-color: var(--color-surface-container-highest) transparent;
