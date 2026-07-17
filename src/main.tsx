@@ -10,12 +10,22 @@ import App from "./App";
 // no persisted state yet) is silently ignored and just falls back to the
 // CSS defaults, same as a first-ever run.
 try {
+  let theme: string | undefined;
+  let accent: string | undefined;
   const persisted = localStorage.getItem("schlag.settings");
   if (persisted) {
     const { state } = JSON.parse(persisted);
-    if (state?.theme) document.documentElement.dataset.theme = state.theme;
-    if (state?.accent) document.documentElement.dataset.accent = state.accent;
+    theme = state?.theme;
+    accent = state?.accent;
   }
+  // Default (and "system") follows the OS; an explicit dark/light wins.
+  document.documentElement.dataset.theme =
+    theme === "dark" || theme === "light"
+      ? theme
+      : window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+  if (accent) document.documentElement.dataset.accent = accent;
 } catch {
   // Ignore — falls back to CSS defaults (dark/indigo).
 }

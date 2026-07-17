@@ -384,6 +384,7 @@ function AppearanceSection() {
           value={store.theme}
           onChange={store.setTheme}
           options={[
+            { label: "System", value: "system" as const },
             { label: "Dark", value: "dark" as const },
             { label: "Light", value: "light" as const },
           ]}

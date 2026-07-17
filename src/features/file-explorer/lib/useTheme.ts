@@ -10,7 +10,21 @@ export function useTheme() {
   const accent = useSettingsStore((s) => s.accent);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.accent = accent;
-  }, [theme, accent]);
+  }, [accent]);
+
+  useEffect(() => {
+    if (theme !== "system") {
+      document.documentElement.dataset.theme = theme;
+      return;
+    }
+    // "system" follows the OS — resolve now and on every OS change.
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      document.documentElement.dataset.theme = mq.matches ? "dark" : "light";
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [theme]);
 }

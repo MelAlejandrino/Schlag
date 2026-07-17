@@ -8,7 +8,7 @@ import { useFileExplorerStore, type ViewMode } from "./file-explorer.store";
 
 export type StartupBehavior = "this-pc" | "last-folder" | "custom";
 export type SettingsSection = "about" | "appearance" | "general" | "indexing" | "storage" | "guide";
-export type Theme = "dark" | "light";
+export type Theme = "system" | "dark" | "light";
 export type Accent = "indigo" | "green" | "orange" | "pink";
 
 interface SettingsState {
@@ -66,8 +66,8 @@ export const useSettingsStore = create<SettingsState>()(
       defaultViewMode: "list",
       startupBehavior: "this-pc",
       startupPath: "",
-      theme: "dark",
-      accent: "indigo",
+      theme: "system",
+      accent: "green",
 
       excludedDirs: [],
       excludedPaths: [],
