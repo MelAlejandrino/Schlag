@@ -4,6 +4,7 @@ import { useSearchStore } from "./store/search.store";
 import { useFileExplorerStore } from "./store/file-explorer.store";
 import { useDebouncedValue } from "./lib/useDebouncedValue";
 import { promoteExactMatch } from "./lib/promoteExactMatch";
+import { filterContentResults } from "./lib/filterContentResults";
 import { THIS_PC, type SearchFilters } from "./file-explorer.types";
 
 const DEBOUNCE_MS = 250;
@@ -46,7 +47,7 @@ export function useSearch() {
     // exact name typed — a pure client-side reorder over whatever page of
     // results already came back, not a second backend query.
     orderedResults: promoteExactMatch(search.results, search.query),
-    orderedContentResults: promoteExactMatch(search.contentResults, search.query),
+    orderedContentResults: filterContentResults(promoteExactMatch(search.contentResults, search.query), search.filters),
     openResult,
   };
 }

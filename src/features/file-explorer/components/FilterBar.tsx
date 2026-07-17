@@ -353,7 +353,6 @@ export function FilterBar() {
                 rightLabel="Contents"
                 active={search.mode === "content"}
                 onChange={(isContent) => {
-                  if (isContent) setShowFilters(false);
                   search.setMode(isContent ? "content" : "filename");
                 }}
               />
@@ -369,9 +368,7 @@ export function FilterBar() {
               <button
                 ref={filtersButtonRef}
                 type="button"
-                title={search.mode === "content" ? "Filters only apply to name search" : undefined}
-                disabled={search.mode === "content"}
-                className={`flex items-center gap-1 rounded border border-surface-container-highest px-2.5 py-1 text-[11px] font-medium transition-colors duration-150 hover:bg-surface-container-highest hover:text-on-surface disabled:cursor-default disabled:opacity-40 ${focusRing} ${
+                className={`flex items-center gap-1 rounded border border-surface-container-highest px-2.5 py-1 text-[11px] font-medium transition-colors duration-150 hover:bg-surface-container-highest hover:text-on-surface ${focusRing} ${
                   activeFilterCount > 0 ? "text-primary" : "text-outline"
                 }`}
                 onClick={() => setShowFilters((s) => !s)}
@@ -485,7 +482,7 @@ export function FilterBar() {
       {/* Floating filters panel — positioned above the Search+ bar so it
           doesn't consume vertical space inside it (which would push results
           off-screen on small windows). */}
-      {showFilters && search.mode === "filename" && (
+      {showFilters && (
         <div
           ref={filtersPanelRef}
           className="pointer-events-auto fixed z-50 animate-menu-in rounded-lg border border-surface-container-highest bg-surface-container-high shadow-lg"
