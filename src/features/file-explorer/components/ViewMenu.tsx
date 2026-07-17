@@ -33,7 +33,9 @@ const segmentClass = (active: boolean) =>
       : "text-outline hover:bg-surface-container-highest hover:text-on-surface"
   }`;
 
-const SECTION_LABEL_CLASS = "font-mono text-[11px] uppercase tracking-wide text-outline";
+// Matches the NewMenu popover's clean menu typography (normal-case, subtle,
+// no font-mono/uppercase) so the two toolbar popovers read as one family.
+const SECTION_LABEL_CLASS = "px-1 text-[11px] font-medium text-outline";
 
 const directionButtonClass = `flex shrink-0 items-center justify-center rounded border border-surface-container-highest p-1.5 text-outline transition-colors duration-150 hover:border-primary-container hover:text-on-surface ${focusRing}`;
 
@@ -185,7 +187,7 @@ export function ViewMenu({
       aria-label="View, sort, and group options"
       tabIndex={-1}
       onKeyDown={menuKeyboard.onKeyDown}
-      className="animate-menu-in themed-scroll fixed z-[70] flex max-h-[calc(100vh-16px)] w-72 flex-col gap-3 overflow-y-auto rounded-lg border border-surface-container-highest bg-surface-container-high p-3 shadow-lg outline-none"
+      className="animate-menu-in themed-scroll fixed z-[70] flex max-h-[calc(100vh-16px)] w-72 flex-col gap-2 overflow-y-auto rounded-lg border border-surface-container-highest bg-surface-container-high p-1.5 shadow-lg outline-none"
       style={{ top: pos.top, left: pos.left }}
     >
       <div className="flex flex-col gap-1.5">

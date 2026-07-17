@@ -111,10 +111,13 @@ export function AddressBar({
       ) : (
         <Breadcrumbs path={currentPath} onNavigate={onNavigate} />
       )}
+      {/* pointer-events-none: mouse users already edit by clicking the bar
+          itself, so the pencil is a keyboard-only affordance — still Tab-
+          focusable and Enter-activatable, just not a mouse target. */}
       <button
         type="button"
         title="Edit path (Ctrl+L)"
-        className={`ml-auto shrink-0 rounded p-1 text-outline transition-colors duration-150 hover:bg-surface-container-highest hover:text-on-surface ${focusRing}`}
+        className={`pointer-events-none ml-auto shrink-0 rounded p-1 text-outline ${focusRing}`}
         onClick={(e) => {
           e.stopPropagation();
           setEditing(true);

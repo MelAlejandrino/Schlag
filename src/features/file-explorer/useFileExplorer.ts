@@ -433,6 +433,10 @@ export function useFileExplorer() {
     visibleEntries,
     selectedIsDir: selectedEntries.length === 1 && selectedEntries[0].is_dir,
     canPaste: store.clipboard !== null && store.currentPath !== THIS_PC && !insideZip,
+    // Clipboard presence is independent of whether Paste applies *here* — the
+    // clear-clipboard affordance stays available even on This PC / inside a zip.
+    hasClipboard: store.clipboard !== null,
+    clearClipboard: store.clearClipboard,
     cutPaths: store.clipboard?.op === "cut" ? store.clipboard.paths : [],
     onSortColumnClick,
     deleteMessage,

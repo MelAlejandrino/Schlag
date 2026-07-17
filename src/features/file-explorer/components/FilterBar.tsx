@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, Loader2, MoreHorizontal } from "lucide-react";
+import { AlertCircle, ChevronDown, Loader2 } from "lucide-react";
 import { useSearch, useSearchTrigger } from "../useSearch";
 import { useFileExplorer } from "../useFileExplorer";
 import { useFileExplorerStore } from "../store/file-explorer.store";
@@ -55,18 +55,21 @@ interface ResultMenuState {
   item: SearchResult;
 }
 
-// A floating control anchored at the bottom-center of the listing. Two levels:
+// A floating bar anchored at the bottom-center of the listing. Collapsed to
+// nothing (w-0/opacity-0) until opened — the entry point is the "Search" button
+// on the second row (EditActionsBar) / Ctrl+F, both via requestFocusFilter.
+// Two levels once open:
 //
-//  • Local (default): a round ellipsis morphs open into a rounded input that
-//    narrows the *current folder's* already-loaded entries client-side
-//    (filterEntries) — instant, no backend.
+//  • Local (default): a rounded input that narrows the *current folder's*
+//    already-loaded entries client-side (filterEntries) — instant, no backend.
 //  • Search+ : clicking the "Search+" button turns the border to the accent
 //    colour and reveals the full index search (name/content, keyword, scope,
 //    filters) with a results panel above — the app's main search, backed by
-//    the shared search store. Ctrl+F opens straight into this level.
+//    the shared search store. On This PC (no listing to filter) it opens
+//    straight into this level.
 //
-// One always-mounted container whose width/border transition between the two,
-// so the upgrade reads as the bar growing rather than a new surface appearing.
+// The container width/border transition between the two, so the upgrade reads
+// as the bar growing rather than a new surface appearing.
 export function FilterBar() {
   const search = useSearch();
   useSearchTrigger();
@@ -305,12 +308,12 @@ export function FilterBar() {
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
       <div
         ref={containerRef}
-        className={`pointer-events-auto relative flex flex-col overflow-hidden border bg-surface-container-high/95 shadow-lg backdrop-blur transition-[width,border-color] duration-300 ease-[cubic-bezier(0.34,1.4,0.5,1)] motion-reduce:transition-none max-w-[88vw] ${
+        className={`pointer-events-auto relative flex flex-col overflow-hidden border bg-surface-container-high/95 shadow-lg backdrop-blur transition-[width,border-color,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.5,1)] motion-reduce:transition-none max-w-[88vw] ${
           plus
-            ? "w-[34rem] rounded-2xl border-primary"
+            ? "w-[34rem] rounded-2xl border-primary opacity-100"
             : expanded
-              ? "w-96 rounded-full border-surface-container-highest"
-              : "w-10 rounded-full border-surface-container-highest"
+              ? "w-96 rounded-full border-surface-container-highest opacity-100"
+              : "pointer-events-none w-0 rounded-full border-transparent opacity-0"
         }`}
       >
         {/* Search+ panel (results, filters, controls) grows upward above the
@@ -387,7 +390,7 @@ export function FilterBar() {
 
         {/* Input row — always present; the bottom of the control both when
             collapsed (clipped to the circle) and expanded. */}
-        <div className={`flex items-center gap-2 ${plus ? "border-t border-surface-container-highest px-3.5 py-2" : "px-3.5 py-2"} ${!expanded ? "invisible" : ""}`}>
+        <div className={`flex items-center gap-2 ${plus ? "border-t border-surface-container-highest px-3.5 py-2" : "px-3.5 py-2"}`}>
           <input
             ref={inputRef}
             type="text"
@@ -435,21 +438,6 @@ export function FilterBar() {
             </button>
           )}
         </div>
-
-        {/* Collapsed ellipsis — fills the circle and opens the local filter. */}
-        {!expanded && (
-          <button
-            type="button"
-            // On This PC there's no listing to filter locally, so open straight
-            // into Search+ (the index search) instead.
-            onClick={() => (isThisPC ? enterPlus() : setLocalOpen(true))}
-            title={isThisPC ? "Search" : "Filter this folder"}
-            aria-label={isThisPC ? "Search" : "Filter this folder"}
-            className="absolute inset-0 flex items-center justify-center text-on-surface-variant transition-colors duration-150 hover:text-on-surface"
-          >
-            <MoreHorizontal size={18} strokeWidth={2} />
-          </button>
-        )}
       </div>
 
       {resultMenu && (

@@ -16,6 +16,9 @@ import { PromptModal } from "./components/PromptModal";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { SettingsPage } from "./components/SettingsPage";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { StatusBar } from "./components/StatusBar";
+import { EditActionsBar } from "./components/EditActionsBar";
+import { ListingActions } from "./components/ListingActions";
 import { WindowControls } from "./components/WindowControls";
 import { WindowResizeHandles } from "./components/WindowResizeHandles";
 import { useExclusiveMenu } from "./lib/useExclusiveMenu";
@@ -23,6 +26,10 @@ import { useExclusiveMenu } from "./lib/useExclusiveMenu";
 export function FileExplorerView() {
   useTheme();
   const explorer = useFileExplorer();
+
+  // Status-bar figures — files only (directory sizes aren't tracked).
+  const selectedSize = explorer.selectedEntries.reduce((sum, e) => sum + (e.is_dir ? 0 : e.size), 0);
+  const totalSize = explorer.visibleEntries.reduce((sum, e) => sum + (e.is_dir ? 0 : e.size), 0);
 
   useKeyboardShortcuts({
     onRefresh: explorer.refresh,
@@ -88,7 +95,6 @@ export function FileExplorerView() {
         canGoForward={explorer.canGoForward}
         canGoUp={!explorer.isThisPC}
         isThisPC={explorer.isThisPC}
-        insideZip={explorer.insideZip}
         isCurrentFavorite={explorer.isCurrentFavorite}
         currentPath={explorer.currentPath}
         addressInput={explorer.addressInput}
@@ -100,21 +106,43 @@ export function FileExplorerView() {
         onAddressChange={explorer.setAddressInput}
         onAddressSubmit={() => explorer.navigate(explorer.addressInput)}
         onNavigate={explorer.navigate}
-        onOpenTerminal={explorer.openTerminalToolbar}
-        onNewFolder={explorer.newFolder}
-        onNewFile={explorer.newFile}
-        viewMode={explorer.viewMode}
-        onViewModeChange={explorer.setViewMode}
-        sortKey={explorer.sortKey}
-        sortDirection={explorer.sortDirection}
-        onSortKeyChange={explorer.setSortKey}
-        onSortDirectionChange={explorer.setSortDirection}
-        groupBy={explorer.groupBy}
-        onGroupByChange={explorer.setGroupBy}
-        groupOrder={explorer.groupOrder}
-        onGroupOrderChange={explorer.setGroupOrder}
+        onSearch={explorer.requestFocusFilter}
         focusAddressBar={explorer.focusAddressBar}
       />}
+
+      {!explorer.isSettings && !explorer.isThisPC && (
+        <EditActionsBar
+          selectedCount={explorer.selectedEntries.length}
+          canPaste={explorer.canPaste}
+          hasClipboard={explorer.hasClipboard}
+          insideZip={explorer.insideZip}
+          onCut={explorer.cutSelected}
+          onCopy={explorer.copySelected}
+          onPaste={explorer.pasteIntoCurrent}
+          onClearClipboard={explorer.clearClipboard}
+          onRename={explorer.renameSelected}
+          onDelete={explorer.deleteSelected}
+          rightSlot={
+            <ListingActions
+              isThisPC={explorer.isThisPC}
+              insideZip={explorer.insideZip}
+              onOpenTerminal={explorer.openTerminalToolbar}
+              onNewFolder={explorer.newFolder}
+              onNewFile={explorer.newFile}
+              viewMode={explorer.viewMode}
+              onViewModeChange={explorer.setViewMode}
+              sortKey={explorer.sortKey}
+              sortDirection={explorer.sortDirection}
+              onSortKeyChange={explorer.setSortKey}
+              onSortDirectionChange={explorer.setSortDirection}
+              groupBy={explorer.groupBy}
+              onGroupByChange={explorer.setGroupBy}
+              groupOrder={explorer.groupOrder}
+              onGroupOrderChange={explorer.setGroupOrder}
+            />
+          }
+        />
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1">
@@ -212,6 +240,15 @@ export function FileExplorerView() {
         </div>
 
         {explorer.terminalOpen && !explorer.isSettings && <TerminalPanel />}
+
+        {!explorer.isSettings && !explorer.isThisPC && (
+          <StatusBar
+            itemCount={explorer.visibleEntries.length}
+            selectedCount={explorer.selectedEntries.length}
+            selectedSize={selectedSize}
+            totalSize={totalSize}
+          />
+        )}
       </div>
 
       {explorer.contextMenu && (
