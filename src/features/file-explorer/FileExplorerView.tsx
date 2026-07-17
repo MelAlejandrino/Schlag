@@ -110,7 +110,7 @@ export function FileExplorerView() {
         focusAddressBar={explorer.focusAddressBar}
       />}
 
-      {!explorer.isSettings && !explorer.isThisPC && (
+      {!explorer.isSettings && (!explorer.isThisPC || explorer.hasSearchResults) && (
         <EditActionsBar
           selectedCount={explorer.selectedEntries.length}
           canPaste={explorer.canPaste}
@@ -179,7 +179,7 @@ export function FileExplorerView() {
 
             {explorer.isSettings ? (
               <SettingsPage onBack={explorer.closeSettings} />
-            ) : explorer.isThisPC ? (
+            ) : explorer.isThisPC && !explorer.hasSearchResults ? (
               <ThisPCView
                 quickAccess={explorer.quickAccess}
                 favorites={explorer.favorites}
@@ -241,7 +241,7 @@ export function FileExplorerView() {
 
         {explorer.terminalOpen && !explorer.isSettings && <TerminalPanel />}
 
-        {!explorer.isSettings && !explorer.isThisPC && (
+        {!explorer.isSettings && (!explorer.isThisPC || explorer.hasSearchResults) && (
           <StatusBar
             itemCount={explorer.visibleEntries.length}
             selectedCount={explorer.selectedEntries.length}
@@ -262,6 +262,7 @@ export function FileExplorerView() {
           onOpen={explorer.openSelected}
           onOpenWith={explorer.openWithSelected}
           onOpenInNewTab={explorer.openSelectedInNewTab}
+          onOpenLocation={explorer.hasSearchResults ? explorer.openLocationSelected : undefined}
           onOpenTerminal={explorer.openTerminalContextMenu}
           onRename={explorer.renameSelected}
           onCopy={explorer.copySelected}

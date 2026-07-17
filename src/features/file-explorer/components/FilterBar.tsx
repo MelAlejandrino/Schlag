@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AlertCircle, ChevronDown, Loader2, X } from "lucide-react";
 import { useSearch, useSearchTrigger } from "../useSearch";
-import { useFileExplorer } from "../useFileExplorer";
 import { useFileExplorerStore } from "../store/file-explorer.store";
 import { useSearchStore } from "../store/search.store";
-import { THIS_PC } from "../file-explorer.types";
+import { THIS_PC, type Entry } from "../file-explorer.types";
 import { filterEntries } from "../lib/filterEntries";
 import { folderSuggestions } from "../lib/folderSuggestions";
 import { countActiveFilters, SearchFiltersFields } from "./SearchFiltersFields";
-import { SearchResultRow, type SearchResult } from "./SearchResultRow";
-import { ContextMenu } from "./ContextMenu";
-import { useExclusiveMenu } from "../lib/useExclusiveMenu";
 
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-container";
@@ -49,23 +45,18 @@ function SegmentedToggle({
   );
 }
 
-interface ResultMenuState {
-  x: number;
-  y: number;
-  item: SearchResult;
-}
-
 // A floating bar anchored at the bottom-center of the listing. Collapsed to
-// nothing (w-0/opacity-0) until opened — the entry point is the "Search" button
-// on the second row (EditActionsBar) / Ctrl+F, both via requestFocusFilter.
-// Two levels once open:
+// nothing (w-0/opacity-0) until opened — the entry point is the Toolbar's
+// Search button / Ctrl+F, both via requestFocusFilter. Two levels once open:
 //
 //  • Local (default): a rounded input that narrows the *current folder's*
 //    already-loaded entries client-side (filterEntries) — instant, no backend.
 //  • Search+ : clicking the "Search+" button turns the border to the accent
-//    colour and reveals the full index search (name/content, keyword, scope,
-//    filters) with a results panel above — the app's main search, backed by
-//    the shared search store. On This PC (no listing to filter) it opens
+//    colour and reveals the full index search controls (name/content, keyword,
+//    scope, filters) — the app's main search, backed by the shared search
+//    store. Its results are pushed into the main directory listing itself (via
+//    store.setSearchResults) rather than shown inside this bar, so they behave
+//    like real entries (select/drag/right-click/sort). On This PC it opens
 //    straight into this level.
 //
 // The container width/border transition between the two, so the upgrade reads
@@ -73,7 +64,7 @@ interface ResultMenuState {
 export function FilterBar() {
   const search = useSearch();
   useSearchTrigger();
-  const explorer = useFileExplorer();
+  const setSearchResults = useFileExplorerStore((s) => s.setSearchResults);
   const entries = useFileExplorerStore((s) => s.entries);
   const filterQuery = useFileExplorerStore((s) => s.filterQuery);
   const setFilterQuery = useFileExplorerStore((s) => s.setFilterQuery);
@@ -91,17 +82,24 @@ export function FilterBar() {
   const isThisPC = currentPath === THIS_PC;
   const scopedToFolder = search.scopeToFolder && !isThisPC;
   const [showFilters, setShowFilters] = useState(false);
-  const [highlighted, setHighlighted] = useState(0);
-  const [resultMenu, setResultMenu] = useState<ResultMenuState | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const filtersButtonRef = useRef<HTMLButtonElement>(null);
   const filtersPanelRef = useRef<HTMLDivElement>(null);
   const [filtersPos, setFiltersPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const activeFilterCount = countActiveFilters(search.filters);
   const folderPathSuggestions = folderSuggestions(favorites, quickAccess);
-  const activeResults: SearchResult[] = search.mode === "content" ? search.orderedContentResults : search.orderedResults;
+  const activeResults: Entry[] = search.mode === "content" ? search.orderedContentResults : search.orderedResults;
+
+  // Push Search+ results into the main listing (or clear it back to the
+  // folder when the query is empty / Search+ closes). Depends on the raw
+  // store arrays (stable refs), not `activeResults` (a fresh array every
+  // render) — otherwise this would re-fire, and clobber selection, on every
+  // render. store.setSearchResults organizes + resets selection.
+  useEffect(() => {
+    setSearchResults(plus && search.hasActiveQuery ? activeResults : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plus, search.hasActiveQuery, search.results, search.contentResults, search.mode, search.query, search.filters]);
 
   // Position the floating filters panel above the Filters button, clamped
   // to the viewport so it never goes off-screen on small windows.
@@ -201,13 +199,15 @@ export function FilterBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, plus]);
 
-  // Click outside closes Search+ only. The local filter deliberately stays put
-  // on outside clicks — its whole point is to narrow the listing so you can then
-  // click / multi-select the matches, and clearing it on the first click made
-  // that impossible. It's dismissed via Escape, an empty-input blur, or leaving
-  // the folder/tab instead.
+  // Outside-click closes Search+ ONLY when there's no query — an empty
+  // Search+ has no results in the listing to interact with, so a click
+  // elsewhere means "never mind." Once a query is typed the results live in
+  // the main listing (outside this bar) and clicking one to select/open it is
+  // the whole point, so the listener isn't even attached then. The local
+  // filter deliberately stays put on outside clicks (same as before): narrow,
+  // then click the matches. Both also dismiss via Escape / the Search+ toggle.
   useEffect(() => {
-    if (!plus) return;
+    if (!plus || search.hasActiveQuery) return;
     function onPointerDown(e: PointerEvent) {
       if (containerRef.current?.contains(e.target as Node)) return;
       if (filtersPanelRef.current?.contains(e.target as Node)) return;
@@ -215,6 +215,23 @@ export function FilterBar() {
     }
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plus, search.hasActiveQuery]);
+
+  // Escape exits Search+ from anywhere — focus is often on a selected result
+  // row in the listing, not this bar's input, once the user starts clicking
+  // results. On a window listener for that reason.
+  useEffect(() => {
+    if (!plus) return;
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        exitPlus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plus]);
 
@@ -230,71 +247,6 @@ export function FilterBar() {
     if (useSearchStore.getState().isOpen) search.closeSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath, activeTabId, terminalOpen]);
-
-  // Keyboard list navigation, only while Search+ is open. On a window listener
-  // (not the input) so it still works after a click drops focus to <body>.
-  const activeResultsRef = useRef(activeResults);
-  activeResultsRef.current = activeResults;
-  const highlightedRef = useRef(highlighted);
-  highlightedRef.current = highlighted;
-  const openResultRef = useRef(search.openResult);
-  openResultRef.current = search.openResult;
-  useEffect(() => {
-    if (!plus) return;
-    function onKey(e: globalThis.KeyboardEvent) {
-      const results = activeResultsRef.current;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setHighlighted((h) => Math.min(h + 1, Math.max(0, results.length - 1)));
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setHighlighted((h) => Math.max(h - 1, 0));
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        const item = results[highlightedRef.current];
-        if (item) openResultRef.current(item);
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        exitPlus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plus]);
-
-  // Reset highlight when the underlying results change (raw store arrays, not
-  // the reordered view — that's a fresh array every render).
-  useEffect(() => {
-    setHighlighted(0);
-  }, [search.results, search.contentResults, search.mode]);
-
-  useEffect(() => {
-    listRef.current?.querySelector(`[data-index="${highlighted}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [highlighted]);
-
-  useEffect(() => {
-    if (!resultMenu) return;
-    const close = () => setResultMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("resize", close);
-    };
-  }, [resultMenu]);
-  useExclusiveMenu(!!resultMenu, () => setResultMenu(null));
-
-  function withMenuClosed(action: () => void) {
-    action();
-    setResultMenu(null);
-  }
-  function withSearchClosedToo(action: () => void) {
-    action();
-    exitPlus();
-    setResultMenu(null);
-  }
 
   const value = plus ? search.query : filterQuery;
   const placeholder = plus
@@ -315,32 +267,11 @@ export function FilterBar() {
               : "pointer-events-none w-0 rounded-full border-transparent opacity-0"
         }`}
       >
-        {/* Search+ panel (results, filters, controls) grows upward above the
-            input since the container's bottom edge is pinned (bottom-4). */}
+        {/* Search+ controls (mode/scope/filters) grow upward above the input
+            since the container's bottom edge is pinned (bottom-4). The results
+            themselves render in the main directory listing, not here. */}
         {plus && (
           <>
-            <div id="floating-search-results" role="listbox" ref={listRef} className="themed-scroll max-h-[45vh] min-h-0 flex-1 overflow-y-auto">
-              {!search.hasActiveQuery ? (
-                <div className="px-4 py-10 text-center text-[12px] text-outline">Type a name, or switch to Contents</div>
-              ) : activeResults.length === 0 ? (
-                <div className="px-4 py-10 text-center text-[12px] text-on-surface-variant">
-                  {search.isSearching ? "Searching…" : `No matches for "${search.query}"`}
-                </div>
-              ) : (
-                activeResults.map((item, index) => (
-                  <SearchResultRow
-                    key={item.path}
-                    item={item}
-                    index={index}
-                    highlighted={index === highlighted}
-                    onHover={() => setHighlighted(index)}
-                    onOpen={() => search.openResult(item)}
-                    onContextMenu={(x, y) => setResultMenu({ x, y, item })}
-                  />
-                ))
-              )}
-            </div>
-
             {search.error && (
               <div className="flex items-center gap-2 border-t border-error-container bg-error-container/20 px-4 py-2 text-[12px] text-on-error-container">
                 <AlertCircle size={14} strokeWidth={1.75} className="shrink-0 text-error" />
@@ -399,11 +330,20 @@ export function FilterBar() {
               if (!plus && !filterQuery.trim()) setLocalOpen(false);
             }}
             onKeyDown={(e) => {
+              // Escape while in Search+ is handled by the window listener above
+              // (focus is often on a result row, not here); the local filter's
+              // own Escape stays local so it doesn't bubble to app shortcuts.
               if (e.key === "Escape" && !plus) {
                 e.stopPropagation();
                 setFilterQuery("");
                 setLocalOpen(false);
                 inputRef.current?.blur();
+              } else if (e.key === "Enter" && plus) {
+                // Enter opens the best result (promoteExactMatch already put an
+                // exact name match first) — typing a full name + Enter reliably
+                // opens that file rather than making the user reach for the mouse.
+                e.preventDefault();
+                if (activeResults[0]) search.openResult(activeResults[0]);
               }
             }}
             placeholder={placeholder}
@@ -439,51 +379,28 @@ export function FilterBar() {
         </div>
       </div>
 
-      {/* Standalone close — a sibling of the bar, not crammed inside it. Only
-          for the local filter (Search+ dismisses via outside-click). */}
-      {!plus && expanded && (
+      {/* Standalone close — a sibling of the bar, not crammed inside it.
+          Present in both levels; closes Search+ or the local filter. */}
+      {expanded && (
         <button
           type="button"
           // onMouseDown beats the input's onBlur-collapse on mouse clicks.
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
-            setFilterQuery("");
-            setLocalOpen(false);
+            if (plus) {
+              exitPlus();
+            } else {
+              setFilterQuery("");
+              setLocalOpen(false);
+            }
             inputRef.current?.blur();
           }}
-          title="Close filter"
-          aria-label="Close filter"
+          title={plus ? "Close search" : "Close filter"}
+          aria-label={plus ? "Close search" : "Close filter"}
           className={`pointer-events-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-surface-container-highest bg-surface-container-high/95 text-outline shadow-lg backdrop-blur transition-colors duration-150 hover:bg-surface-container-highest hover:text-on-surface ${focusRing}`}
         >
           <X size={20} strokeWidth={2} />
         </button>
-      )}
-
-      {resultMenu && (
-        <div className="pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-          <ContextMenu
-            state={{ x: resultMenu.x, y: resultMenu.y, background: false }}
-            onDismiss={() => setResultMenu(null)}
-            selectedCount={1}
-            selectedIsDir={resultMenu.item.is_dir}
-            canPaste={false}
-            isCurrentFavorite={false}
-            onOpen={() => withMenuClosed(() => search.openResult(resultMenu.item))}
-            onOpenLocation={() => withSearchClosedToo(() => explorer.openFileLocation(resultMenu.item))}
-            onOpenWith={() => withMenuClosed(() => explorer.openEntryWith(resultMenu.item))}
-            onOpenTerminal={() => withSearchClosedToo(() => explorer.openTerminal(resultMenu.item.path))}
-            onRename={() => withSearchClosedToo(() => explorer.renameEntry(resultMenu.item))}
-            onCopy={() => withMenuClosed(() => explorer.copyEntryToClipboard(resultMenu.item))}
-            onCut={() => withMenuClosed(() => explorer.cutEntryToClipboard(resultMenu.item))}
-            onPaste={() => {}}
-            onDelete={() => withSearchClosedToo(() => explorer.deleteEntryPrompt(resultMenu.item))}
-            onProperties={() => withMenuClosed(() => explorer.showEntryProperties(resultMenu.item))}
-            onNewFolder={() => {}}
-            onNewFile={() => {}}
-            onRefresh={() => {}}
-            onToggleFavorite={() => {}}
-          />
-        </div>
       )}
 
       {/* Floating filters panel — positioned above the Search+ bar so it

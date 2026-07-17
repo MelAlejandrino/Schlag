@@ -16,14 +16,17 @@ interface SelectModifiers {
 
 export function useFileExplorer() {
   const store = useFileExplorerStore();
-  // Search no longer replaces the directory listing — it's a self-contained
-  // overlay (SearchModal) with its own open/select/navigate handling, so
-  // selection here only ever needs to track the current folder's entries.
-  const selectedEntries = store.entries.filter((e) => store.selectedPaths.includes(e.path));
-  // The rows the listing actually renders once the "filter this folder" query
-  // is applied. Selection still tracks store.entries (a selected row hidden by
-  // the filter stays selected but off-screen), same as any client-side filter.
-  const visibleEntries = filterEntries(store.entries, store.filterQuery);
+  // Search+ (index search) results, when active, ARE the listing — so the
+  // whole selection/DnD/context-menu/sort/group machinery below operates on
+  // them exactly as it does on a real folder (store.searchResults is already
+  // organized by the current sort/group). Falls back to the folder's own
+  // entries when no search is showing.
+  const listingEntries = store.searchResults ?? store.entries;
+  const selectedEntries = listingEntries.filter((e) => store.selectedPaths.includes(e.path));
+  // The rows the listing actually renders. For a folder, the "filter this
+  // folder" query is applied client-side (a selected row hidden by the filter
+  // stays selected but off-screen); search results are shown as-is.
+  const visibleEntries = store.searchResults ?? filterEntries(store.entries, store.filterQuery);
   // Derived once per render, same as selectedEntries above, and reused by
   // every plain-function write-action guard below — a zip is read-only
   // browsing (plan.md's Phase 7 sketch). The useCallback handlers further
@@ -429,6 +432,10 @@ export function useFileExplorer() {
     // ContextMenu use this to hide/disable write actions the same way they
     // already do for isThisPC.
     insideZip,
+    // Search+ results are showing in the listing (vs the current folder) —
+    // FileExplorerView uses this to render the listing over This PC and to
+    // surface "Open file location" in the shared context menu.
+    hasSearchResults: store.searchResults !== null,
     selectedEntries,
     visibleEntries,
     selectedIsDir: selectedEntries.length === 1 && selectedEntries[0].is_dir,

@@ -113,6 +113,13 @@ interface FileExplorerState {
   // unrelated re-render. Transient, not part of Tab — only ever meaningful
   // for the active tab right after its own navigation.
   revealPath: string | null;
+  // When non-null, the active tab's listing shows these index-search results
+  // (Search+) instead of the folder's own entries — so every existing listing
+  // consumer (selection, DnD, context menu, sort/group, view mode) works on
+  // them unchanged. Transient/top-level (like revealPath), NOT stored per-tab:
+  // it's an overlay tied to the active tab only, cleared by any navigation
+  // (see applyTabPatch) or tab switch. Set by FilterBar from the search store.
+  searchResults: Entry[] | null;
   // Live client-side "filter this folder" query over the active tab's
   // already-loaded entries — transient, not persisted, global (not per-tab),
   // reset by FilterBar whenever currentPath changes. selectRange reads it so
@@ -148,6 +155,7 @@ interface FileExplorerState {
   nextTab: () => void;
   prevTab: () => void;
   reorderTabs: (draggedId: string, targetId: string, insertAfter: boolean) => void;
+  setSearchResults: (results: Entry[] | null) => void;
   setRevealPath: (path: string | null) => void;
   setFilterQuery: (query: string) => void;
   requestFocusAddress: () => void;
@@ -194,7 +202,16 @@ export const useFileExplorerStore = create<FileExplorerState>()(
       function applyTabPatch(tabId: string, patch: Partial<Tab>) {
         const { tabs, activeTabId } = get();
         const nextTabs = tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t));
-        set(tabId === activeTabId ? { ...patch, tabs: nextTabs } : { tabs: nextTabs });
+        if (tabId !== activeTabId) {
+          set({ tabs: nextTabs });
+          return;
+        }
+        // Any navigation of the active tab (navigate/goBack/goForward all set
+        // currentPath) ends the search overlay — the listing goes back to
+        // showing the real folder. Selection patches leave currentPath
+        // untouched, so they don't clear it.
+        const extra = patch.currentPath !== undefined ? { searchResults: null } : {};
+        set({ ...patch, ...extra, tabs: nextTabs });
       }
 
       function getTab(tabId: string): Tab | undefined {
@@ -209,9 +226,15 @@ export const useFileExplorerStore = create<FileExplorerState>()(
       // sort, no I/O, regardless of how many tabs are open) keeps all of
       // them consistent with the new preference immediately.
       function reorganizeAllTabs(sortKey: SortKey, sortDirection: SortDirection, groupBy: GroupBy, groupOrder: SortDirection) {
-        const { tabs, activeTabId } = get();
+        const { tabs, activeTabId, searchResults } = get();
         const nextTabs = tabs.map((t) => ({ ...t, entries: organizeEntries(t.entries, sortKey, sortDirection, groupBy, groupOrder) }));
-        set({ tabs: nextTabs, entries: nextTabs.find((t) => t.id === activeTabId)?.entries ?? [] });
+        set({
+          tabs: nextTabs,
+          entries: nextTabs.find((t) => t.id === activeTabId)?.entries ?? [],
+          // The search overlay (when shown) is re-sorted the same way, so a
+          // sort/group change while searching reorders the results in place.
+          searchResults: searchResults ? organizeEntries(searchResults, sortKey, sortDirection, groupBy, groupOrder) : null,
+        });
       }
 
       return {
@@ -239,6 +262,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         deleteConfirmOpen: false,
         deleteTarget: null,
         revealPath: null,
+        searchResults: null,
         filterQuery: "",
         focusAddressBar: 0,
         focusFilter: 0,
@@ -441,6 +465,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
             historyIndex: tab.historyIndex,
             selectedPaths: tab.selectedPaths,
             selectionAnchor: tab.selectionAnchor,
+            searchResults: null,
           });
           get().navigate(path);
         },
@@ -467,6 +492,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
             historyIndex: next.historyIndex,
             selectedPaths: next.selectedPaths,
             selectionAnchor: next.selectionAnchor,
+            searchResults: null,
           });
         },
 
@@ -484,6 +510,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
             historyIndex: next.historyIndex,
             selectedPaths: next.selectedPaths,
             selectionAnchor: next.selectionAnchor,
+            searchResults: null,
           });
         },
 
@@ -510,6 +537,20 @@ export const useFileExplorerStore = create<FileExplorerState>()(
           set({ tabs: reorderTabs(get().tabs, draggedId, targetId, insertAfter) });
         },
 
+        // Organizes results by the current sort/group so range-select slices
+        // the same order the listing shows (same invariant navigate relies on),
+        // and clears the ambient selection whenever the shown set changes.
+        setSearchResults: (results: Entry[] | null) => {
+          const { sortKey, sortDirection, groupBy, groupOrder, activeTabId, searchResults } = get();
+          const organized = results ? organizeEntries(results, sortKey, sortDirection, groupBy, groupOrder) : null;
+          // Nothing was showing and nothing will — don't touch selection. This
+          // matters after "Open file location": navigate already nulled the
+          // overlay and selected the target, then Search+ closing fires this
+          // with null; without the guard it would wipe that fresh selection.
+          if (organized === null && searchResults === null) return;
+          applyTabPatch(activeTabId, { selectedPaths: [], selectionAnchor: null });
+          set({ searchResults: organized });
+        },
         setRevealPath: (path: string | null) => set({ revealPath: path }),
         setFilterQuery: (query: string) => set({ filterQuery: query }),
         requestFocusAddress: () => set({ focusAddressBar: get().focusAddressBar + 1 }),
@@ -582,11 +623,12 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         },
 
         selectRange: (path: string) => {
-          const { entries, selectionAnchor, activeTabId, filterQuery } = get();
-          // Range over the *visible* rows only — with a filter active the
-          // hidden entries aren't between the two clicked rows on screen, so
-          // slicing the unfiltered array would silently select them too.
-          const paths = filterEntries(entries, filterQuery).map((e) => e.path);
+          const { entries, selectionAnchor, activeTabId, filterQuery, searchResults } = get();
+          // Range over the *visible* rows only — the search overlay when it's
+          // shown, else the folder's entries with any local filter applied
+          // (hidden entries aren't between the two clicked rows on screen, so
+          // slicing the unfiltered array would silently select them too).
+          const paths = (searchResults ?? filterEntries(entries, filterQuery)).map((e) => e.path);
           const anchorIdx = selectionAnchor ? paths.indexOf(selectionAnchor) : -1;
           const targetIdx = paths.indexOf(path);
           if (anchorIdx === -1 || targetIdx === -1) {
