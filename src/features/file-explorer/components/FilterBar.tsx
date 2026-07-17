@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, Loader2 } from "lucide-react";
+import { AlertCircle, ChevronDown, Loader2, X } from "lucide-react";
 import { useSearch, useSearchTrigger } from "../useSearch";
 import { useFileExplorer } from "../useFileExplorer";
 import { useFileExplorerStore } from "../store/file-explorer.store";
@@ -201,23 +201,22 @@ export function FilterBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, plus]);
 
-  // Click outside the filter bar closes it — both local filter and Search+.
+  // Click outside closes Search+ only. The local filter deliberately stays put
+  // on outside clicks — its whole point is to narrow the listing so you can then
+  // click / multi-select the matches, and clearing it on the first click made
+  // that impossible. It's dismissed via Escape, an empty-input blur, or leaving
+  // the folder/tab instead.
   useEffect(() => {
-    if (!expanded) return;
+    if (!plus) return;
     function onPointerDown(e: PointerEvent) {
       if (containerRef.current?.contains(e.target as Node)) return;
       if (filtersPanelRef.current?.contains(e.target as Node)) return;
-      if (plus) exitPlus();
-      else {
-        setFilterQuery("");
-        setLocalOpen(false);
-        inputRef.current?.blur();
-      }
+      exitPlus();
     }
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, plus]);
+  }, [plus]);
 
   // Both levels are transient overlays tied to the current view: switching
   // folder *or* tab collapses the local filter and closes Search+, matching
@@ -305,7 +304,7 @@ export function FilterBar() {
     : "Filter items in this folder…";
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
+    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center gap-2">
       <div
         ref={containerRef}
         className={`pointer-events-auto relative flex flex-col overflow-hidden border bg-surface-container-high/95 shadow-lg backdrop-blur transition-[width,border-color,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.5,1)] motion-reduce:transition-none max-w-[88vw] ${
@@ -439,6 +438,26 @@ export function FilterBar() {
           )}
         </div>
       </div>
+
+      {/* Standalone close — a sibling of the bar, not crammed inside it. Only
+          for the local filter (Search+ dismisses via outside-click). */}
+      {!plus && expanded && (
+        <button
+          type="button"
+          // onMouseDown beats the input's onBlur-collapse on mouse clicks.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            setFilterQuery("");
+            setLocalOpen(false);
+            inputRef.current?.blur();
+          }}
+          title="Close filter"
+          aria-label="Close filter"
+          className={`pointer-events-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-surface-container-highest bg-surface-container-high/95 text-outline shadow-lg backdrop-blur transition-colors duration-150 hover:bg-surface-container-highest hover:text-on-surface ${focusRing}`}
+        >
+          <X size={20} strokeWidth={2} />
+        </button>
+      )}
 
       {resultMenu && (
         <div className="pointer-events-auto" onClick={(e) => e.stopPropagation()}>
