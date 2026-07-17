@@ -5,6 +5,7 @@ import { useSettingsStore } from "./settings.store";
 import { dirname } from "../lib/path";
 import type { PromptKind } from "../lib/promptConfig";
 import { sortEntries, type SortDirection, type SortKey } from "../lib/sortEntries";
+import { filterEntries } from "../lib/filterEntries";
 import { compareGroupKeys, groupKeyFor, type GroupBy } from "../lib/groupEntries";
 import { createTab, nextActiveTabId, reorderTabs, type Tab } from "../lib/tabs";
 import { zipSplit } from "../lib/zipPath";
@@ -112,6 +113,11 @@ interface FileExplorerState {
   // unrelated re-render. Transient, not part of Tab — only ever meaningful
   // for the active tab right after its own navigation.
   revealPath: string | null;
+  // Live client-side "filter this folder" query over the active tab's
+  // already-loaded entries — transient, not persisted, global (not per-tab),
+  // reset by FilterBar whenever currentPath changes. selectRange reads it so
+  // shift-click ranges only ever span the *visible* rows, not hidden ones.
+  filterQuery: string;
   focusAddressBar: number;
   initialized: boolean;
   viewState: "browse" | "settings";
@@ -140,6 +146,7 @@ interface FileExplorerState {
   prevTab: () => void;
   reorderTabs: (draggedId: string, targetId: string, insertAfter: boolean) => void;
   setRevealPath: (path: string | null) => void;
+  setFilterQuery: (query: string) => void;
   requestFocusAddress: () => void;
   setAddressInput: (value: string) => void;
   setSidebarWidth: (width: number) => void;
@@ -228,6 +235,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         deleteConfirmOpen: false,
         deleteTarget: null,
         revealPath: null,
+        filterQuery: "",
         focusAddressBar: 0,
         terminalOpen: false,
         terminalCwd: "",
@@ -498,6 +506,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         },
 
         setRevealPath: (path: string | null) => set({ revealPath: path }),
+        setFilterQuery: (query: string) => set({ filterQuery: query }),
         requestFocusAddress: () => set({ focusAddressBar: get().focusAddressBar + 1 }),
         openSettings: () => set({ viewState: "settings" }),
         closeSettings: () => set({ viewState: "browse" }),
@@ -567,8 +576,11 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         },
 
         selectRange: (path: string) => {
-          const { entries, selectionAnchor, activeTabId } = get();
-          const paths = entries.map((e) => e.path);
+          const { entries, selectionAnchor, activeTabId, filterQuery } = get();
+          // Range over the *visible* rows only — with a filter active the
+          // hidden entries aren't between the two clicked rows on screen, so
+          // slicing the unfiltered array would silently select them too.
+          const paths = filterEntries(entries, filterQuery).map((e) => e.path);
           const anchorIdx = selectionAnchor ? paths.indexOf(selectionAnchor) : -1;
           const targetIdx = paths.indexOf(path);
           if (anchorIdx === -1 || targetIdx === -1) {

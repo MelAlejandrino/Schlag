@@ -247,11 +247,52 @@ svg {
   animation: backdrop-in 150ms ease-out;
 }
 
+/* A newly opened tab popping into the strip — grows from its leading edge with
+   the same slight overshoot the floating filter uses. Plays once on mount;
+   tabs are keyed by id so React reuses nodes on reorder and this never
+   replays for an existing tab. */
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-tab-in {
+  transform-origin: left bottom;
+  animation: tab-in 220ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+/* A tab leaving — the reverse of tab-in, accelerating out (ease-in). Held at
+   the end state (forwards) until the real close unmounts it; the remaining
+   tabs then slide in to fill the gap via useTabFlip. */
+@keyframes tab-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
+.animate-tab-out {
+  transform-origin: left bottom;
+  animation: tab-out 100ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-spin-once,
   .animate-menu-in,
   .animate-dialog-in,
-  .animate-backdrop-in {
+  .animate-backdrop-in,
+  .animate-tab-in,
+  .animate-tab-out {
     animation: none;
   }
 }

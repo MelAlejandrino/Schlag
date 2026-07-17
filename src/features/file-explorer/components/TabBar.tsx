@@ -3,6 +3,7 @@ import { Plus, X } from "lucide-react";
 import { isTabDrag, startTabDrag } from "../lib/dnd";
 import { useDropTarget } from "../lib/useDropTarget";
 import { useExclusiveMenu } from "../lib/useExclusiveMenu";
+import { useTabFlip } from "../lib/useTabFlip";
 import { tabLabel, type Tab } from "../lib/tabs";
 import { TabContextMenu } from "./TabContextMenu";
 import { WindowControls } from "./WindowControls";
@@ -47,6 +48,32 @@ export function TabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab, o
   // dataTransfer.getData() during dragover for security, so the id can't be
   // recovered from the event mid-drag; we stash it here on dragstart instead.
   const draggedTabId = useRef<string | null>(null);
+  // Slides each tab from its previous slot to its new one on reorder/close.
+  const registerTab = useTabFlip(draggedTabId);
+  // Tabs playing their exit animation — kept in the array (still rendered)
+  // until animationend, so there's something on screen to animate before the
+  // real close removes them from the store.
+  const [closingIds, setClosingIds] = useState<Set<string>>(new Set());
+
+  // Route every close through here so the tab shrinks out first. The last tab
+  // never closes (the store refuses), so there's nothing to animate; and under
+  // reduced motion there's no animationend to wait on, so close immediately.
+  function requestClose(id: string) {
+    if (tabs.length <= 1 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      onCloseTab(id);
+      return;
+    }
+    setClosingIds((s) => new Set(s).add(id));
+  }
+
+  function finishClose(id: string) {
+    setClosingIds((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+    onCloseTab(id);
+  }
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -99,8 +126,11 @@ export function TabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab, o
             key={tab.id}
             tab={tab}
             active={tab.id === activeTabId}
+            innerRef={registerTab(tab.id)}
+            closing={closingIds.has(tab.id)}
+            onExited={() => finishClose(tab.id)}
             onSwitchTab={onSwitchTab}
-            onCloseTab={onCloseTab}
+            onCloseTab={requestClose}
             onDrop={onDrop}
             onTabDragStart={(id) => (draggedTabId.current = id)}
             onTabDragEnd={() => (draggedTabId.current = null)}
@@ -135,7 +165,7 @@ export function TabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab, o
             onDismiss={() => setContextMenu(null)}
             canClose={tabs.length > 1}
             onClose={() => {
-              onCloseTab(contextMenu.tabId);
+              requestClose(contextMenu.tabId);
               setContextMenu(null);
             }}
             onDuplicate={() => {
@@ -153,6 +183,9 @@ export function TabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab, o
 interface TabItemProps {
   tab: Tab;
   active: boolean;
+  innerRef: (el: HTMLDivElement | null) => void;
+  closing: boolean;
+  onExited: () => void;
   onSwitchTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onDrop: DropHandler;
@@ -162,7 +195,7 @@ interface TabItemProps {
   onContextMenu: (x: number, y: number) => void;
 }
 
-function TabItem({ tab, active, onSwitchTab, onCloseTab, onDrop, onTabDragStart, onTabDragEnd, onReorderDragOver, onContextMenu }: TabItemProps) {
+function TabItem({ tab, active, innerRef, closing, onExited, onSwitchTab, onCloseTab, onDrop, onTabDragStart, onTabDragEnd, onReorderDragOver, onContextMenu }: TabItemProps) {
   // Keyed off a ref, not React state — the timer must survive across the
   // many onDragOver re-renders that happen while just hovering in place,
   // and must be cancelable from onDragLeave/onDrop before it ever fires.
@@ -192,9 +225,15 @@ function TabItem({ tab, active, onSwitchTab, onCloseTab, onDrop, onTabDragStart,
     // buttons can't nest. Matches EntryTable's own row-is-a-div-with-onClick
     // precedent for the same reason.
     <div
+      ref={innerRef}
       role="tab"
       aria-selected={active}
       tabIndex={0}
+      // Only the exit animation should trigger the real close — tab-in also
+      // fires animationend (on mount), so gate on `closing`.
+      onAnimationEnd={() => {
+        if (closing) onExited();
+      }}
       draggable
       onDragStart={(e) => {
         startTabDrag(e, tab.id);
@@ -239,7 +278,7 @@ function TabItem({ tab, active, onSwitchTab, onCloseTab, onDrop, onTabDragStart,
         dropTarget.onDrop(e);
       }}
       title={tab.currentPath === tabLabel(tab.currentPath) ? undefined : tab.currentPath}
-      className={`group flex max-w-56 min-w-32 shrink-0 cursor-default items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-[13px] transition-colors duration-150 select-none ${focusRing} ${
+      className={`${closing ? "animate-tab-out pointer-events-none" : "animate-tab-in"} group flex max-w-56 min-w-32 shrink-0 cursor-default items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-[13px] transition-colors duration-150 select-none ${focusRing} ${
         dropTarget.isOver
           ? "border-primary-container bg-surface-container-high text-primary"
           : active

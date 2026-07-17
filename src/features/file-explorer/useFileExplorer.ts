@@ -3,6 +3,7 @@ import { fileExplorerService } from "./services/file-explorer.service";
 import { useFileExplorerStore } from "./store/file-explorer.store";
 import { basename, dirname, joinPath } from "./lib/path";
 import { getPromptConfig } from "./lib/promptConfig";
+import { filterEntries } from "./lib/filterEntries";
 import type { SortKey } from "./lib/sortEntries";
 import { isInsideZip, zipRootPath, zipSplit } from "./lib/zipPath";
 import { THIS_PC, type Entry } from "./file-explorer.types";
@@ -19,6 +20,10 @@ export function useFileExplorer() {
   // overlay (SearchModal) with its own open/select/navigate handling, so
   // selection here only ever needs to track the current folder's entries.
   const selectedEntries = store.entries.filter((e) => store.selectedPaths.includes(e.path));
+  // The rows the listing actually renders once the "filter this folder" query
+  // is applied. Selection still tracks store.entries (a selected row hidden by
+  // the filter stays selected but off-screen), same as any client-side filter.
+  const visibleEntries = filterEntries(store.entries, store.filterQuery);
   // Derived once per render, same as selectedEntries above, and reused by
   // every plain-function write-action guard below — a zip is read-only
   // browsing (plan.md's Phase 7 sketch). The useCallback handlers further
@@ -425,6 +430,7 @@ export function useFileExplorer() {
     // already do for isThisPC.
     insideZip,
     selectedEntries,
+    visibleEntries,
     selectedIsDir: selectedEntries.length === 1 && selectedEntries[0].is_dir,
     canPaste: store.clipboard !== null && store.currentPath !== THIS_PC && !insideZip,
     cutPaths: store.clipboard?.op === "cut" ? store.clipboard.paths : [],

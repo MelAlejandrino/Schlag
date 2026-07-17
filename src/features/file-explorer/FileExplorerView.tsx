@@ -9,6 +9,7 @@ import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { EntryTable } from "./components/EntryTable";
 import { EntryGrid } from "./components/EntryGrid";
+import { FilterBar } from "./components/FilterBar";
 import { ThisPCView } from "./components/ThisPCView";
 import { ContextMenu } from "./components/ContextMenu";
 import { IndexStatusBadge } from "./components/IndexStatusBadge";
@@ -162,52 +163,63 @@ export function FileExplorerView() {
                 onNavigate={explorer.navigate}
                 onDrop={explorer.dropOnto}
               />
-            ) : explorer.viewMode === "list" ? (
-              <EntryTable
-                entries={explorer.entries}
-                selectedPaths={explorer.selectedPaths}
-                currentPath={explorer.currentPath}
-                cutPaths={explorer.cutPaths}
-                revealPath={explorer.revealPath}
-                onRevealed={() => explorer.setRevealPath(null)}
-                onOpen={explorer.openEntry}
-                onSelect={explorer.selectEntry}
-                onContextMenu={explorer.openContextMenuForEntry}
-                onClearSelection={explorer.clearSelection}
-                onDragPaths={explorer.getDragPaths}
-                onDrop={explorer.dropOnto}
-                onBackgroundContextMenu={explorer.openBackgroundContextMenu}
-                sortKey={explorer.sortKey}
-                sortDirection={explorer.sortDirection}
-                onSortColumnClick={explorer.onSortColumnClick}
-                groupBy={explorer.groupBy}
-                onSelectOnly={explorer.selectOnly}
-                onSelectRange={explorer.selectRange}
-                onDelete={explorer.deleteSelected}
-                onRename={explorer.renameSelected}
-              />
             ) : (
-              <EntryGrid
-                entries={explorer.entries}
-                selectedPaths={explorer.selectedPaths}
-                currentPath={explorer.currentPath}
-                cutPaths={explorer.cutPaths}
-                revealPath={explorer.revealPath}
-                onRevealed={() => explorer.setRevealPath(null)}
-                onOpen={explorer.openEntry}
-                onSelect={explorer.selectEntry}
-                onContextMenu={explorer.openContextMenuForEntry}
-                onClearSelection={explorer.clearSelection}
-                onDragPaths={explorer.getDragPaths}
-                onDrop={explorer.dropOnto}
-                onBackgroundContextMenu={explorer.openBackgroundContextMenu}
-                groupBy={explorer.groupBy}
-                size={explorer.viewMode}
-                onSelectOnly={explorer.selectOnly}
-                onSelectRange={explorer.selectRange}
-                onDelete={explorer.deleteSelected}
-                onRename={explorer.renameSelected}
-              />
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                {explorer.viewMode === "list" ? (
+                  <EntryTable
+                    entries={explorer.visibleEntries}
+                    selectedPaths={explorer.selectedPaths}
+                    currentPath={explorer.currentPath}
+                    cutPaths={explorer.cutPaths}
+                    revealPath={explorer.revealPath}
+                    onRevealed={() => explorer.setRevealPath(null)}
+                    onOpen={explorer.openEntry}
+                    onSelect={explorer.selectEntry}
+                    onContextMenu={explorer.openContextMenuForEntry}
+                    onClearSelection={explorer.clearSelection}
+                    onDragPaths={explorer.getDragPaths}
+                    onDrop={explorer.dropOnto}
+                    onBackgroundContextMenu={explorer.openBackgroundContextMenu}
+                    sortKey={explorer.sortKey}
+                    sortDirection={explorer.sortDirection}
+                    onSortColumnClick={explorer.onSortColumnClick}
+                    groupBy={explorer.groupBy}
+                    onSelectOnly={explorer.selectOnly}
+                    onSelectRange={explorer.selectRange}
+                    onDelete={explorer.deleteSelected}
+                    onRename={explorer.renameSelected}
+                  />
+                ) : (
+                  <EntryGrid
+                    entries={explorer.visibleEntries}
+                    selectedPaths={explorer.selectedPaths}
+                    currentPath={explorer.currentPath}
+                    cutPaths={explorer.cutPaths}
+                    revealPath={explorer.revealPath}
+                    onRevealed={() => explorer.setRevealPath(null)}
+                    onOpen={explorer.openEntry}
+                    onSelect={explorer.selectEntry}
+                    onContextMenu={explorer.openContextMenuForEntry}
+                    onClearSelection={explorer.clearSelection}
+                    onDragPaths={explorer.getDragPaths}
+                    onDrop={explorer.dropOnto}
+                    onBackgroundContextMenu={explorer.openBackgroundContextMenu}
+                    groupBy={explorer.groupBy}
+                    size={explorer.viewMode}
+                    onSelectOnly={explorer.selectOnly}
+                    onSelectRange={explorer.selectRange}
+                    onDelete={explorer.deleteSelected}
+                    onRename={explorer.renameSelected}
+                  />
+                )}
+                <FilterBar
+                  query={explorer.filterQuery}
+                  onChange={explorer.setFilterQuery}
+                  matchCount={explorer.visibleEntries.length}
+                  totalCount={explorer.entries.length}
+                  currentPath={explorer.currentPath}
+                />
+              </div>
             )}
           </main>
         </div>
