@@ -25,9 +25,10 @@ try {
       : window.matchMedia("(prefers-color-scheme: dark)").matches
         ? "dark"
         : "light";
-  if (accent) document.documentElement.dataset.accent = accent;
+  document.documentElement.dataset.accent = accent || "green";
 } catch {
-  // Ignore — falls back to CSS defaults (dark/indigo).
+  // Ignore — falls back to CSS defaults.
+  document.documentElement.dataset.accent = "green";
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
