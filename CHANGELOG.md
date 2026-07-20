@@ -2,7 +2,7 @@
 
 All notable changes to Schlag will be documented in this file.
 
-## [1.0.1] - 2025-07-20
+## [1.0.1] - 2026-07-20
 
 ### Fixed
 
@@ -10,7 +10,7 @@ All notable changes to Schlag will be documented in this file.
 - Default theme correctly follows system preference on fresh install
 - Rewrote README as product-focused landing page
 
-## [1.0.0] - 2025-07-20
+## [1.0.0] - 2026-07-20
 
 ### Added
 
