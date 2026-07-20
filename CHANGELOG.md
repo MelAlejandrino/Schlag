@@ -2,6 +2,17 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.2] - 2026-07-20
+
+### Added
+
+- **Search+ open/close animation:** The bar now grows smoothly into the Search+ (index search) level with a width/border reveal, and the mode/scope/filters controls fade in as part of the expansion rather than popping in. Closing mirrors the motion.
+
+### Fixed
+
+- Search+ controls no longer flash at full height then collapse on open (removed a flex-wrap reflow during the width transition)
+- Search+ on This PC opens with a slower, smoother 500ms reveal (was snapping at 300ms), and now closes at the same pacing instead of snapping shut
+
 ## [1.0.1] - 2026-07-20
 
 ### Fixed
