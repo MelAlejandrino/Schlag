@@ -11,6 +11,7 @@ import {
   Pencil,
   RotateCw,
   Scissors,
+  Search,
   SquarePlus,
   Star,
   TerminalSquare,
@@ -26,6 +27,7 @@ interface ContextMenuProps {
   selectedIsDir: boolean;
   canPaste: boolean;
   isCurrentFavorite: boolean;
+  currentPath: string;
   onOpen: () => void;
   onOpenWith: () => void;
   // Optional and omitted by the normal directory-listing context menu —
@@ -54,6 +56,8 @@ interface ContextMenuProps {
   onNewFile: () => void;
   onRefresh: () => void;
   onToggleFavorite: () => void;
+  onSearchInFolder?: (path: string) => void;
+  selectedPath?: string;
 }
 
 const focusRing =
@@ -70,6 +74,7 @@ export function ContextMenu({
   selectedIsDir,
   canPaste,
   isCurrentFavorite,
+  currentPath,
   onOpen,
   onOpenWith,
   onOpenLocation,
@@ -85,6 +90,8 @@ export function ContextMenu({
   onNewFile,
   onRefresh,
   onToggleFavorite,
+  onSearchInFolder,
+  selectedPath,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: state.y, left: state.x });
@@ -133,6 +140,15 @@ export function ContextMenu({
           <TerminalSquare {...iconProps} />
           Open Terminal
         </button>
+        {onSearchInFolder && (
+          <>
+            <div className="my-0.5 border-t border-surface-container-highest" />
+            <button role="menuitem" className={itemClass} onClick={() => onSearchInFolder(currentPath)}>
+              <Search {...iconProps} />
+              Search in this folder
+            </button>
+          </>
+        )}
         <div className="my-0.5 border-t border-surface-container-highest" />
         <button role="menuitem" className={itemClass} onClick={onToggleFavorite}>
           <Star {...iconProps} fill={isCurrentFavorite ? "currentColor" : "none"} />
@@ -174,6 +190,12 @@ export function ContextMenu({
         <button role="menuitem" className={itemClass} onClick={onOpenTerminal} disabled={selectedCount !== 1}>
           <TerminalSquare {...iconProps} />
           Open Terminal
+        </button>
+      )}
+      {selectedIsDir && onSearchInFolder && selectedPath && (
+        <button role="menuitem" className={itemClass} onClick={() => onSearchInFolder(selectedPath)} disabled={selectedCount !== 1}>
+          <Search {...iconProps} />
+          Search in this folder
         </button>
       )}
       {!selectedIsDir && (

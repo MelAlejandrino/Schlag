@@ -16,6 +16,10 @@ interface SearchState {
   // subfolders) by default. A manual `filters.folder` value always takes
   // precedence over this — see useSearchTrigger().
   scopeToFolder: boolean;
+  // One-shot folder override set by "Search in folder" from a context menu.
+  // Takes precedence over currentPath in withScope(). Cleared on close/clear
+  // so subsequent searches revert to the normal scope toggle behavior.
+  scopeFolder: string | null;
   // Filename search (fast, trigram-indexed, all SearchFilters apply) vs
   // content search (Tantivy full-text over file contents, folder scope
   // only — see SearchBox's disabled-filters note). A lasting session
@@ -33,6 +37,7 @@ interface SearchState {
   error: string | null;
 
   openSearch: () => void;
+  openSearchInFolder: (folder: string) => void;
   closeSearch: () => void;
   setQuery: (query: string) => void;
   setFilters: (filters: SearchFilters) => void;
@@ -59,6 +64,7 @@ export const useSearchStore = create<SearchState>()((set) => ({
   query: "",
   filters: {},
   scopeToFolder: true,
+  scopeFolder: null,
   mode: "filename",
   keywordMode: false,
   results: [],
@@ -67,7 +73,8 @@ export const useSearchStore = create<SearchState>()((set) => ({
   error: null,
 
   openSearch: () => set({ isOpen: true }),
-  closeSearch: () => set({ isOpen: false }),
+  openSearchInFolder: (folder) => set({ isOpen: true, query: "", scopeFolder: folder, results: [], contentResults: [] }),
+  closeSearch: () => set({ isOpen: false, scopeFolder: null }),
   setQuery: (query) => set({ query }),
   setFilters: (filters) => set({ filters }),
   setScopeToFolder: (scopeToFolder) => set({ scopeToFolder }),
@@ -104,6 +111,6 @@ export const useSearchStore = create<SearchState>()((set) => ({
     }
   },
 
-  clear: () => set({ query: "", filters: {}, results: [], contentResults: [], isSearching: false, error: null }),
+  clear: () => set({ query: "", filters: {}, results: [], contentResults: [], isSearching: false, error: null, scopeFolder: null }),
   clearError: () => set({ error: null }),
 }));

@@ -1,4 +1,4 @@
-import { ExternalLink, Info, SquarePlus, Star } from "lucide-react";
+import { ExternalLink, Info, Search, SquarePlus, Star } from "lucide-react";
 import { usePopoverPosition } from "../lib/usePopoverPosition";
 import { useMenuKeyboard } from "../lib/useMenuKeyboard";
 
@@ -11,6 +11,8 @@ interface SidebarContextMenuProps {
   onOpenInNewTab: () => void;
   onToggleFavorite: () => void;
   onProperties: () => void;
+  onSearchInFolder: (path: string) => void;
+  folderPath: string;
 }
 
 const focusRing =
@@ -35,6 +37,8 @@ export function SidebarContextMenu({
   onOpenInNewTab,
   onToggleFavorite,
   onProperties,
+  onSearchInFolder,
+  folderPath,
 }: SidebarContextMenuProps) {
   const { ref, pos } = usePopoverPosition(x, y);
   const menuKeyboard = useMenuKeyboard(ref, onDismiss);
@@ -54,6 +58,10 @@ export function SidebarContextMenu({
       <button role="menuitem" className={itemClass} onClick={onOpenInNewTab}>
         <SquarePlus {...iconProps} />
         Open in new tab
+      </button>
+      <button role="menuitem" className={itemClass} onClick={() => onSearchInFolder(folderPath)}>
+        <Search {...iconProps} />
+        Search in folder
       </button>
       <div className="my-0.5 border-t border-surface-container-highest" />
       <button role="menuitem" className={itemClass} onClick={onToggleFavorite}>

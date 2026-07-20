@@ -74,6 +74,7 @@ export function RecentFiles({ className = "" }: { className?: string }) {
             selectedIsDir={false}
             canPaste={false}
             isCurrentFavorite={false}
+            currentPath={explorer.currentPath}
             onOpen={() => {
               setRowMenu(null);
               explorer.openEntry(rowMenu.entry);
@@ -120,6 +121,7 @@ export function RecentFiles({ className = "" }: { className?: string }) {
             onNewFile={() => {}}
             onRefresh={() => {}}
             onToggleFavorite={() => {}}
+            onSearchInFolder={() => {}}
           />
         </div>
       )}

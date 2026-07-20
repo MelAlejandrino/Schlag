@@ -29,6 +29,7 @@ interface SidebarProps {
   onToggleFavorite: (path: string) => void;
   onShowProperties: (path: string) => void;
   onOpenSettings: () => void;
+  onSearchInFolder: (path: string) => void;
 }
 
 interface SidebarMenuState {
@@ -49,6 +50,7 @@ export function Sidebar({
   onToggleFavorite,
   onShowProperties,
   onOpenSettings,
+  onSearchInFolder,
 }: SidebarProps) {
   const activePath = longestMatchingPath(currentPath, [
     ...quickAccess.map((d) => d.path),
@@ -161,12 +163,17 @@ export function Sidebar({
             y={contextMenu.y}
             onDismiss={() => setContextMenu(null)}
             isFavorite={favorites.includes(contextMenu.path)}
+            folderPath={contextMenu.path}
             onOpen={() => {
               onNavigate(contextMenu.path);
               setContextMenu(null);
             }}
             onOpenInNewTab={() => {
               onOpenInNewTab(contextMenu.path);
+              setContextMenu(null);
+            }}
+            onSearchInFolder={(path) => {
+              onSearchInFolder(path);
               setContextMenu(null);
             }}
             onToggleFavorite={() => {

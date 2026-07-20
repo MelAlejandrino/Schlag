@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { AlertCircle, X } from "lucide-react";
 import { useFileExplorer } from "./useFileExplorer";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
@@ -22,6 +23,7 @@ import { WindowControls } from "./components/WindowControls";
 import { WindowResizeHandles } from "./components/WindowResizeHandles";
 import { useExclusiveMenu } from "./lib/useExclusiveMenu";
 import { useClickOutsideClose } from "./lib/useClickOutsideClose";
+import { useSearchStore } from "./store/search.store";
 
 export function FileExplorerView() {
   useTheme();
@@ -61,6 +63,10 @@ export function FileExplorerView() {
   useClickOutsideClose(!!explorer.contextMenu, explorer.closeContextMenu);
 
   useExclusiveMenu(!!explorer.contextMenu, explorer.closeContextMenu);
+
+  const searchInFolder = useCallback((folder: string) => {
+    useSearchStore.getState().openSearchInFolder(folder);
+  }, []);
 
   return (
     <div
@@ -150,6 +156,7 @@ export function FileExplorerView() {
               onToggleFavorite={explorer.toggleFavorite}
               onShowProperties={explorer.showPropertiesForPath}
               onOpenSettings={explorer.openSettings}
+              onSearchInFolder={searchInFolder}
             />
           )}
 
@@ -250,6 +257,8 @@ export function FileExplorerView() {
           selectedIsDir={explorer.selectedIsDir}
           canPaste={explorer.canPaste}
           isCurrentFavorite={explorer.isCurrentFavorite}
+          currentPath={explorer.currentPath}
+          selectedPath={explorer.selectedEntries.length === 1 ? explorer.selectedEntries[0].path : undefined}
           onOpen={explorer.openSelected}
           onOpenWith={explorer.openWithSelected}
           onOpenInNewTab={explorer.openSelectedInNewTab}
@@ -265,6 +274,7 @@ export function FileExplorerView() {
           onNewFile={explorer.newFile}
           onRefresh={explorer.refresh}
           onToggleFavorite={explorer.toggleCurrentFavorite}
+          onSearchInFolder={searchInFolder}
         />
       )}
 

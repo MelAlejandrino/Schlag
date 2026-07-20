@@ -10,10 +10,14 @@ import { THIS_PC, type SearchFilters } from "./file-explorer.types";
 const DEBOUNCE_MS = 250;
 
 // A manually-set folder filter always wins over the current-folder default —
-// setting it is a deliberate, specific choice. "This PC" has no real folder
-// to scope to, so it's treated the same as scoping being turned off.
-function withScope(filters: SearchFilters, scopeToFolder: boolean, currentPath: string): SearchFilters {
-  if (filters.folder || !scopeToFolder || currentPath === THIS_PC) return filters;
+// setting it is a deliberate, specific choice. The one-shot scopeFolder
+// (from "Search in folder" context menu) also takes precedence.
+// "This PC" has no real folder to scope to, so it's treated the same as
+// scoping being turned off.
+function withScope(filters: SearchFilters, scopeToFolder: boolean, currentPath: string, scopeFolder: string | null): SearchFilters {
+  if (filters.folder) return filters;
+  if (scopeFolder) return { ...filters, folder: scopeFolder };
+  if (!scopeToFolder || currentPath === THIS_PC) return filters;
   return { ...filters, folder: currentPath };
 }
 
@@ -62,6 +66,7 @@ export function useSearchTrigger() {
   const query = useSearchStore((s) => s.query);
   const filters = useSearchStore((s) => s.filters);
   const scopeToFolder = useSearchStore((s) => s.scopeToFolder);
+  const scopeFolder = useSearchStore((s) => s.scopeFolder);
   const mode = useSearchStore((s) => s.mode);
   const keywordMode = useSearchStore((s) => s.keywordMode);
   const runSearch = useSearchStore((s) => s.runSearch);
@@ -77,12 +82,12 @@ export function useSearchTrigger() {
   useEffect(() => {
     if (!isOpen) return;
     if (mode === "content") {
-      runContentSearch(debouncedQuery, withScope(debouncedFilters, scopeToFolder, currentPath).folder, keywordMode);
+      runContentSearch(debouncedQuery, withScope(debouncedFilters, scopeToFolder, currentPath, scopeFolder).folder, keywordMode);
     } else {
-      runSearch(debouncedQuery, withScope(debouncedFilters, scopeToFolder, currentPath), keywordMode);
+      runSearch(debouncedQuery, withScope(debouncedFilters, scopeToFolder, currentPath, scopeFolder), keywordMode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, debouncedQuery, debouncedFilters, scopeToFolder, mode, keywordMode, currentPath]);
+  }, [isOpen, debouncedQuery, debouncedFilters, scopeToFolder, scopeFolder, mode, keywordMode, currentPath]);
 
   // Results are a snapshot from whenever they were last fetched — if a file
   // shown in results gets deleted (or a new one added) somewhere else, e.g.
@@ -95,9 +100,9 @@ export function useSearchTrigger() {
       if (!current.isOpen || !current.query.trim()) return;
       const path = useFileExplorerStore.getState().currentPath;
       if (current.mode === "content") {
-        runContentSearch(current.query, withScope(current.filters, current.scopeToFolder, path).folder, current.keywordMode);
+        runContentSearch(current.query, withScope(current.filters, current.scopeToFolder, path, current.scopeFolder).folder, current.keywordMode);
       } else {
-        runSearch(current.query, withScope(current.filters, current.scopeToFolder, path), current.keywordMode);
+        runSearch(current.query, withScope(current.filters, current.scopeToFolder, path, current.scopeFolder), current.keywordMode);
       }
     }
     window.addEventListener("focus", refetchOnFocus);
