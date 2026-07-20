@@ -82,6 +82,17 @@ export function FilterBar() {
   const isThisPC = currentPath === THIS_PC;
   const scopedToFolder = search.scopeToFolder && !isThisPC;
   const [showFilters, setShowFilters] = useState(false);
+  // On This PC the bar opens straight into Search+ from w-0 (a much longer
+  // travel than the local→plus grow), so it uses a slower 500ms reveal. This
+  // flag stays set through the close transition too, otherwise closing would
+  // snap back at the default 300ms the instant `plus` flips false.
+  const [slowAnim, setSlowAnim] = useState(false);
+  const slowAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function setSlowAnimFor(duration: number) {
+    setSlowAnim(true);
+    if (slowAnimTimer.current) clearTimeout(slowAnimTimer.current);
+    slowAnimTimer.current = setTimeout(() => setSlowAnim(false), duration);
+  }
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const filtersButtonRef = useRef<HTMLButtonElement>(null);
@@ -151,6 +162,7 @@ export function FilterBar() {
     const q = useFileExplorerStore.getState().filterQuery;
     if (q) search.setQuery(q);
     setFilterQuery("");
+    if (isThisPC) setSlowAnimFor(500);
     search.openSearch();
   }
   function exitPlus() {
@@ -158,6 +170,7 @@ export function FilterBar() {
     search.clear();
     search.closeSearch();
     setShowFilters(false);
+    if (isThisPC) setSlowAnimFor(500);
   }
 
   useEffect(() => {
@@ -240,6 +253,8 @@ export function FilterBar() {
     setFilterQuery("");
     setLocalOpen(false);
     setShowFilters(false);
+    setSlowAnim(false);
+    if (slowAnimTimer.current) clearTimeout(slowAnimTimer.current);
     if (useSearchStore.getState().isOpen) search.closeSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath, activeTabId, terminalOpen]);
@@ -255,7 +270,7 @@ export function FilterBar() {
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center gap-2">
       <div
         ref={containerRef}
-        className={`pointer-events-auto relative flex flex-col overflow-hidden border bg-surface-container-high/95 shadow-lg backdrop-blur transition-[width,border-color,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.5,1)] motion-reduce:transition-none max-w-[88vw] ${
+        className={`pointer-events-auto relative flex flex-col overflow-hidden border bg-surface-container-high/95 shadow-lg backdrop-blur transition-[width,border-color,opacity] duration-300 ease-[cubic-bezier(0.34,1.4,0.5,1)] motion-reduce:transition-none max-w-[88vw] ${slowAnim ? "duration-500" : ""} ${
           plus
             ? "w-[34rem] rounded-2xl border-primary opacity-100"
             : expanded
@@ -267,7 +282,7 @@ export function FilterBar() {
             since the container's bottom edge is pinned (bottom-4). The results
             themselves render in the main directory listing, not here. */}
         {plus && (
-          <>
+          <div className="animate-plus-controls-in">
             {search.error && (
               <div className="flex items-center gap-2 border-t border-error-container bg-error-container/20 px-4 py-2 text-[12px] text-on-error-container">
                 <AlertCircle size={14} strokeWidth={1.75} className="shrink-0 text-error" />
@@ -276,7 +291,7 @@ export function FilterBar() {
             )}
 
 
-            <div className="flex flex-wrap items-center gap-2 border-t border-surface-container-highest px-3.5 py-2">
+            <div className="flex flex-nowrap items-center gap-2 border-t border-surface-container-highest px-3.5 py-2">
               <SegmentedToggle
                 leftLabel="Names"
                 rightLabel="Contents"
@@ -311,7 +326,7 @@ export function FilterBar() {
                 <ChevronDown size={13} strokeWidth={1.75} className={`transition-transform duration-150 ${showFilters ? "rotate-180" : ""}`} />
               </button>
             </div>
-          </>
+          </div>
         )}
 
         {/* Input row — always present; the bottom of the control both when
