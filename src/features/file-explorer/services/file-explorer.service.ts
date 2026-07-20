@@ -12,7 +12,6 @@ import type {
 } from "../file-explorer.types";
 
 export const fileExplorerService = {
-  homeDir: () => invoke<string>("home_dir"),
   quickAccessDirs: () => invoke<QuickAccessDir[]>("quick_access_dirs"),
   listDrives: () => invoke<QuickAccessDir[]>("list_drives"),
   listDir: (path: string) => invoke<Entry[]>("list_dir", { path }),

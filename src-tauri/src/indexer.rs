@@ -489,7 +489,7 @@ pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, conten
         // deferred under that kind of continuous write pressure rather than
         // ever running to completion. One explicit TRUNCATE checkpoint right
         // after the write burst ends reclaims that space in one shot.
-        let checkpoint_result = conn.lock().unwrap().execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let checkpoint_result = conn.lock().unwrap_or_else(|e| e.into_inner()).execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         if let Err(e) = checkpoint_result {
             tracing::warn!("wal checkpoint after initial scan failed: {e}");
         }
@@ -537,7 +537,7 @@ fn scan_drive(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, conte
             tracing::warn!("failed to read {}: {err}", root.display());
         }
     }
-    flush_batch(&mut conn.lock().unwrap(), &mut root_batch, status);
+    flush_batch(&mut conn.lock().unwrap_or_else(|e| e.into_inner()), &mut root_batch, status);
 
     subdirs.par_iter().for_each(|dir| walk_subtree(conn, dir, status, content_tx));
 }
@@ -566,10 +566,10 @@ fn walk_subtree(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, con
         batch.push(row);
 
         if batch.len() >= BATCH_SIZE {
-            flush_batch(&mut conn.lock().unwrap(), &mut batch, status);
+            flush_batch(&mut conn.lock().unwrap_or_else(|e| e.into_inner()), &mut batch, status);
         }
     }
-    flush_batch(&mut conn.lock().unwrap(), &mut batch, status);
+    flush_batch(&mut conn.lock().unwrap_or_else(|e| e.into_inner()), &mut batch, status);
 }
 
 // Checking is a stat call per already-indexed row — cheap individually,
@@ -585,7 +585,7 @@ fn walk_subtree(conn: &Mutex<Connection>, root: &Path, status: &IndexStatus, con
 // checked first and short-circuits the stat call entirely for those rows.
 fn prune_stale_entries(conn: &Mutex<Connection>, content_tx: &Sender<ContentEvent>) {
     let paths: Vec<String> = {
-        let conn = conn.lock().unwrap();
+        let conn = conn.lock().unwrap_or_else(|e| e.into_inner());
         let rows = conn
             .prepare("SELECT path FROM files")
             .and_then(|mut stmt| stmt.query_map([], |r| r.get::<_, String>(0))?.collect());
@@ -606,7 +606,7 @@ fn prune_stale_entries(conn: &Mutex<Connection>, content_tx: &Sender<ContentEven
         return;
     }
     {
-        let mut conn = conn.lock().unwrap();
+        let mut conn = conn.lock().unwrap_or_else(|e| e.into_inner());
         if let Err(e) = database::delete_batch(&mut conn, &stale) {
             tracing::error!("failed to batch-prune {} stale/excluded entries: {e}", stale.len());
         }
@@ -635,7 +635,7 @@ fn prune_stale_entries(conn: &Mutex<Connection>, content_tx: &Sender<ContentEven
 // instead of relying on that one-shot side channel ever having succeeded.
 fn prune_stale_content_state(conn: &Mutex<Connection>, content_tx: &Sender<ContentEvent>) {
     let paths: Vec<String> = {
-        let conn = conn.lock().unwrap();
+        let conn = conn.lock().unwrap_or_else(|e| e.into_inner());
         match database::content_index_state_paths(&conn) {
             Ok(paths) => paths,
             Err(e) => {
@@ -670,12 +670,7 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<database::FileRow>, status
 }
 
 pub(crate) fn make_row(path: &Path, meta: &fs::Metadata) -> database::FileRow {
-    let modified_ms = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let modified_ms = database::modified_ms(meta);
     database::FileRow {
         path: path.to_string_lossy().into_owned(),
         name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -732,7 +727,7 @@ fn start_watchers(drives: &[String]) -> (Vec<RecommendedWatcher>, std::sync::mps
 // shows up immediately rather than waiting for the whole scan to finish.
 fn drain_events(conn: &Mutex<Connection>, rx: std::sync::mpsc::Receiver<notify::Event>, content_tx: &Sender<ContentEvent>) {
     for event in rx {
-        apply_event(&conn.lock().unwrap(), event, content_tx);
+        apply_event(&conn.lock().unwrap_or_else(|e| e.into_inner()), event, content_tx);
     }
 }
 
@@ -762,13 +757,17 @@ fn apply_event(conn: &Connection, event: notify::Event, content_tx: &Sender<Cont
         EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if event.paths.len() == 2 => {
             if !path_is_excluded(&event.paths[0]) {
                 if let Some(old) = event.paths[0].to_str() {
-                    let _ = database::delete_by_path(conn, old);
+                    if let Err(e) = database::delete_by_path(conn, old) {
+                        tracing::warn!("failed to remove renamed-from {old} from index: {e}");
+                    }
                 }
                 queue_content_removal(content_tx, &event.paths[0]);
             }
             if !path_is_excluded(&event.paths[1]) {
                 if let Some(row) = row_from_path(&event.paths[1]) {
-                    let _ = database::upsert_entry(conn, &row);
+                    if let Err(e) = database::upsert_entry(conn, &row) {
+                        tracing::warn!("failed to index renamed-to {}: {e}", event.paths[1].display());
+                    }
                     queue_content_event(content_tx, &event.paths[1], row.extension.as_deref(), row.modified_ms);
                 }
             }

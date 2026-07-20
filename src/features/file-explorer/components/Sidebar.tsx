@@ -1,10 +1,11 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useState, type ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
 import { Monitor, Settings, Star, X } from "lucide-react";
 import { basename, longestMatchingPath } from "../lib/path";
 import { useDropTarget } from "../lib/useDropTarget";
 import { useSidebarResize } from "../lib/useSidebarResize";
 import { useExclusiveMenu } from "../lib/useExclusiveMenu";
+import { useClickOutsideClose } from "../lib/useClickOutsideClose";
 import { driveIcon, folderIcon } from "../lib/folderIcon";
 import { stripZipMarkerSuffix } from "../lib/zipPath";
 import { THIS_PC } from "../file-explorer.types";
@@ -62,16 +63,7 @@ export function Sidebar({
   // selection/contextMenu machinery EntryTable's rows use.
   const [contextMenu, setContextMenu] = useState<SidebarMenuState | null>(null);
 
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("resize", close);
-    };
-  }, [contextMenu]);
+  useClickOutsideClose(!!contextMenu, () => setContextMenu(null));
 
   useExclusiveMenu(!!contextMenu, () => setContextMenu(null));
 

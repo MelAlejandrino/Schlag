@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { AlertCircle, X } from "lucide-react";
 import { useFileExplorer } from "./useFileExplorer";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
@@ -22,6 +21,7 @@ import { ListingActions } from "./components/ListingActions";
 import { WindowControls } from "./components/WindowControls";
 import { WindowResizeHandles } from "./components/WindowResizeHandles";
 import { useExclusiveMenu } from "./lib/useExclusiveMenu";
+import { useClickOutsideClose } from "./lib/useClickOutsideClose";
 
 export function FileExplorerView() {
   useTheme();
@@ -58,16 +58,7 @@ export function FileExplorerView() {
     },
   });
 
-  useEffect(() => {
-    if (!explorer.contextMenu) return;
-    const close = () => explorer.closeContextMenu();
-    window.addEventListener("click", close);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("resize", close);
-    };
-  }, [explorer.contextMenu]);
+  useClickOutsideClose(!!explorer.contextMenu, explorer.closeContextMenu);
 
   useExclusiveMenu(!!explorer.contextMenu, explorer.closeContextMenu);
 

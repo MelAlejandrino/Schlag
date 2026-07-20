@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { isTabDrag, startTabDrag } from "../lib/dnd";
 import { useDropTarget } from "../lib/useDropTarget";
 import { useExclusiveMenu } from "../lib/useExclusiveMenu";
+import { useClickOutsideClose } from "../lib/useClickOutsideClose";
 import { useTabFlip } from "../lib/useTabFlip";
 import { tabLabel, type Tab } from "../lib/tabs";
 import { TabContextMenu } from "./TabContextMenu";
@@ -75,16 +76,7 @@ export function TabBar({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewTab, o
     onCloseTab(id);
   }
 
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("resize", close);
-    };
-  }, [contextMenu]);
+  useClickOutsideClose(!!contextMenu, () => setContextMenu(null));
 
   useExclusiveMenu(!!contextMenu, () => setContextMenu(null));
 

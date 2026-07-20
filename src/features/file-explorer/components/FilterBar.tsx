@@ -118,10 +118,6 @@ export function FilterBar() {
     if (showFilters) positionFilters();
   }, [showFilters, positionFilters]);
 
-  useLayoutEffect(() => {
-    if (showFilters) positionFilters();
-  }, [showFilters, positionFilters]);
-
   // Close floating filters on outside click or Escape.
   useEffect(() => {
     if (!showFilters) return;

@@ -1,4 +1,4 @@
-export type PreviewKind = "image" | "video" | "pdf" | "markdown" | "text" | "office" | "archive" | "unsupported";
+type PreviewKind = "image" | "video" | "pdf" | "markdown" | "text" | "office" | "archive" | "unsupported";
 
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico"];
 const VIDEO_EXTENSIONS = ["mp4", "webm", "mov", "mkv", "avi"];

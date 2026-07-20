@@ -65,12 +65,6 @@ export interface ContentSearchResult {
 // Access + Drives as content (like Explorer's "This PC"), no directory listing.
 export const THIS_PC = "this-pc";
 
-export interface ArchiveEntry {
-  name: string;
-  size: number;
-  is_dir: boolean;
-}
-
 // Backend settings persisted as JSON at {app_data_dir}/settings.json.
 export interface AppSettings {
   excluded_dirs: string[];

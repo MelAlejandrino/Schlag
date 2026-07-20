@@ -2,7 +2,7 @@ import { create } from "zustand/react";
 import { fileExplorerService } from "../services/file-explorer.service";
 import type { ContentSearchResult, Entry, SearchFilters } from "../file-explorer.types";
 
-export type SearchMode = "filename" | "content";
+type SearchMode = "filename" | "content";
 
 interface SearchState {
   // Whether the SearchModal overlay is open. The query/results are kept on

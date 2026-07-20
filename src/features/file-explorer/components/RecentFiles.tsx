@@ -3,6 +3,7 @@ import { Clock } from "lucide-react";
 import { fileExplorerService } from "../services/file-explorer.service";
 import { useFileExplorer } from "../useFileExplorer";
 import { useIndexStatus } from "../lib/useIndexStatus";
+import { useClickOutsideClose } from "../lib/useClickOutsideClose";
 import { formatDate } from "../lib/format";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
 import { ContextMenu } from "./ContextMenu";
@@ -41,18 +42,7 @@ export function RecentFiles({ className = "" }: { className?: string }) {
     };
   }, []);
 
-  // Same click-outside-closes pattern SearchModal uses for its own local
-  // result-row context menu.
-  useEffect(() => {
-    if (!rowMenu) return;
-    const close = () => setRowMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("resize", close);
-    };
-  }, [rowMenu]);
+  useClickOutsideClose(!!rowMenu, () => setRowMenu(null));
 
   return (
     <div className={className}>

@@ -149,9 +149,7 @@ fn extract_plain_text(path: &Path) -> Option<String> {
 // or any of the several lower-maturity pptx crates surveyed). Both formats'
 // visible text runs use the *local* XML tag name `t` (`w:t` in DOCX,
 // `a:t` in PPTX — namespace-prefix-stripped local name is the same).
-fn text_from_zip_parts(path: &Path, parts: &[String]) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut archive = ZipArchive::new(file).ok()?;
+fn text_from_zip_parts(archive: &mut ZipArchive<std::fs::File>, parts: &[String]) -> Option<String> {
     let mut out = String::new();
     for part in parts {
         let mut entry = archive.by_name(part).ok()?;
@@ -195,24 +193,25 @@ fn text_in_tag(xml: &str) -> String {
 }
 
 fn extract_docx_text(path: &Path) -> Option<String> {
-    text_from_zip_parts(path, &["word/document.xml".to_string()])
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    text_from_zip_parts(&mut archive, &["word/document.xml".to_string()])
 }
 
 fn extract_pptx_text(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
-    let archive = ZipArchive::new(file).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
     let mut slides: Vec<(u32, String)> = archive
         .file_names()
         .filter(|n| n.starts_with("ppt/slides/slide") && n.ends_with(".xml"))
         .map(|n| (slide_number(n), n.to_string()))
         .collect();
     slides.sort_by_key(|(n, _)| *n);
-    drop(archive);
-    let parts: Vec<String> = slides.into_iter().map(|(_, name)| name).collect();
-    if parts.is_empty() {
+    if slides.is_empty() {
         return None;
     }
-    text_from_zip_parts(path, &parts)
+    let parts: Vec<String> = slides.into_iter().map(|(_, name)| name).collect();
+    text_from_zip_parts(&mut archive, &parts)
 }
 
 // "ppt/slides/slide12.xml" -> 12. Numeric, not lexicographic, sort — a

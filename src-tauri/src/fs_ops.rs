@@ -4,7 +4,6 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
 
 #[derive(Serialize)]
 pub struct Entry {
@@ -84,12 +83,7 @@ pub fn list_dir(path: String) -> Result<Vec<Entry>, String> {
         .filter_map(|res| res.ok())
         .filter_map(|dir_entry| {
             let meta = dir_entry.metadata().ok()?;
-            let modified_ms = meta
-                .modified()
-                .ok()?
-                .duration_since(UNIX_EPOCH)
-                .ok()?
-                .as_millis() as u64;
+            let modified_ms = database::modified_ms(&meta);
             Some(Entry {
                 name: dir_entry.file_name().to_string_lossy().into_owned(),
                 path: dir_entry.path().to_string_lossy().into_owned(),
@@ -148,8 +142,7 @@ pub fn rename_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusql
     database::index_path(&conn, Path::new(&to));
     content_tx.queue_remove(Path::new(&from));
     if let Ok(meta) = fs::metadata(&to) {
-        let modified_ms = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-        content_tx.queue_index(Path::new(&to), modified_ms);
+        content_tx.queue_index(Path::new(&to), database::modified_ms(&meta));
     }
     Ok(())
 }
@@ -181,8 +174,7 @@ pub fn move_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlit
         database::index_path(&conn, &to);
         content_tx.queue_remove(&from_path);
         if let Ok(meta) = fs::metadata(&to) {
-            let modified_ms = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-            content_tx.queue_index(&to, modified_ms);
+            content_tx.queue_index(&to, database::modified_ms(&meta));
         }
         return Ok(());
     }
@@ -257,11 +249,7 @@ fn index_tree(conn: &Mutex<rusqlite::Connection>, content_tx: &ContentEventSende
                 }
             }
         } else {
-            let modified_ms = meta.modified().ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            content_tx.queue_index(path, modified_ms);
+            content_tx.queue_index(path, database::modified_ms(&meta));
         }
     }
 }
@@ -369,6 +357,10 @@ fn unique_destination(dst: &Path) -> PathBuf {
     let stem = dst.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let ext = dst.extension().map(|e| e.to_string_lossy().into_owned());
 
+    // ponytail: no iteration cap — each pass tries a strictly new "stem (n)"
+    // and returns the first that's free, so this only spins while every lower
+    // number is already taken on disk. Physically bounded by the filesystem;
+    // no realistic input keeps it looping.
     let mut n = 1;
     loop {
         let candidate_name = match &ext {

@@ -1,6 +1,18 @@
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::UNIX_EPOCH;
+
+/// Last-modified time from filesystem metadata as milliseconds since the Unix
+/// epoch, 0 if unavailable. Shared by every place that builds a row/Entry from
+/// a stat call, so they can't drift apart.
+pub fn modified_ms(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 // Phase 2 scope only: path/name/extension/size/dates for a working file
 // index. Hashes (Duplicate Detection), tags/favorites, preview cache, and
@@ -210,12 +222,7 @@ pub fn delete_batch(conn: &mut Connection, paths: &[String]) -> rusqlite::Result
 // callers should skip silently, same as the indexer's own row_from_path.
 fn row_from_path(path: &Path) -> Option<FileRow> {
     let meta = std::fs::metadata(path).ok()?;
-    let modified_ms = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let modified_ms = modified_ms(&meta);
     Some(FileRow {
         path: path.to_string_lossy().into_owned(),
         name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -232,7 +239,9 @@ fn row_from_path(path: &Path) -> Option<FileRow> {
 pub fn index_path(conn: &Mutex<Connection>, path: &Path) {
     if let Some(row) = row_from_path(path) {
         if let Ok(c) = conn.lock() {
-            let _ = upsert_entry(&c, &row);
+            if let Err(e) = upsert_entry(&c, &row) {
+                tracing::warn!("failed to index {}: {e}", path.display());
+            }
         }
     }
 }
@@ -242,7 +251,9 @@ pub fn index_path(conn: &Mutex<Connection>, path: &Path) {
 pub fn remove_path(conn: &Mutex<Connection>, path: &Path) {
     if let Some(p) = path.to_str() {
         if let Ok(c) = conn.lock() {
-            let _ = delete_by_path(&c, p);
+            if let Err(e) = delete_by_path(&c, p) {
+                tracing::warn!("failed to remove {p} from index: {e}");
+            }
         }
     }
 }
