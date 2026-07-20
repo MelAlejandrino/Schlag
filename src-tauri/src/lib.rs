@@ -82,8 +82,6 @@ pub fn run() {
             search::search_files,
             search::recent_files,
             content_index::search_content,
-            preview::preview_text,
-            preview::list_archive_entries,
             preview::list_archive_dir,
             preview::extract_zip_entry_to_temp,
             settings::get_settings,

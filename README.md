@@ -25,6 +25,8 @@ See [`CLAUDE.md`](./CLAUDE.md) for the full architecture writeup (why things are
 
 ## Getting started
 
+> **Platform:** Schlag is currently Windows-only. Cross-platform support (Linux/macOS) is planned for a future release.
+
 ```sh
 npm install
 npm run tauri dev
