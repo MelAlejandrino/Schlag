@@ -2,6 +2,14 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.1] - 2025-07-20
+
+### Fixed
+
+- Default accent color now correctly applies green on fresh install (no persisted settings)
+- Default theme correctly follows system preference on fresh install
+- Rewrote README as product-focused landing page
+
 ## [1.0.0] - 2025-07-20
 
 ### Added
