@@ -51,9 +51,11 @@ pub fn run() {
             // moved into the indexer's dedicated content-writer thread.
             let content_dir = data_dir.join("content_index");
             let (content_index, content_schema) = content_index::open_index(&content_dir)?;
+            let content_reader = content_index.reader()?;
             app.manage(content_index::ContentIndexState {
                 index: content_index.clone(),
                 schema: content_schema.clone(),
+                reader: content_reader,
             });
 
             let drives = fs_ops::list_drives().into_iter().map(|d| d.path).collect();

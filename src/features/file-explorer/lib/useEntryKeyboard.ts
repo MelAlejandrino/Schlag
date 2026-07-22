@@ -360,11 +360,7 @@ export function useEntryKeyboard({
         case "a":
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
-            const { selectOnly, toggleSelect } = useFileExplorerStore.getState();
-            selectOnly(ents[0].path);
-            for (let i = 1; i < len; i++) {
-              toggleSelect(ents[i].path);
-            }
+            useFileExplorerStore.getState().selectAll(ents.map((en) => en.path));
           } else {
             doTypeAhead();
           }

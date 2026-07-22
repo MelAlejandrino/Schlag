@@ -204,16 +204,35 @@ fn build_query(query: &str, filters: &SearchFilters, keyword_mode: bool) -> (Str
 // navigation — not a recursive walk) and upsert them right before querying,
 // so a file that's visibly there in Explorer is guaranteed visible to a
 // scoped search too, regardless of whether the watcher caught it.
-fn rescan_folder(conn: &mut Connection, folder: &str) {
-    let Ok(entries) = std::fs::read_dir(folder) else { return };
-    let rows: Vec<database::FileRow> = entries
+//
+// Two things keep this off the hot path: (1) the read_dir/metadata I/O runs
+// in collect_folder_rows *before* the connection lock is taken, so it doesn't
+// serialize other index consumers behind blocking I/O; (2) it happens once
+// per scope change (should_rescan below), not on every debounced keystroke —
+// the folder's contents don't change between keystrokes, and the notify
+// watcher covers ongoing changes.
+fn collect_folder_rows(folder: &str) -> Vec<database::FileRow> {
+    let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
+    entries
         .filter_map(Result::ok)
         .filter_map(|e| e.metadata().ok().map(|m| crate::indexer::make_row(&e.path(), &m)))
-        .collect();
-    if !rows.is_empty() {
-        let _ = database::upsert_batch(conn, &rows);
+        .collect()
+}
+
+// True (and records the folder) only when `folder` differs from the last one
+// rescanned, so repeated searches into the same scoped folder rescan once.
+fn should_rescan(last: &mut Option<String>, folder: &str) -> bool {
+    if last.as_deref() == Some(folder) {
+        false
+    } else {
+        *last = Some(folder.to_string());
+        true
     }
 }
+
+// Module-level: Tauri runs each command on a pool thread, so a thread_local
+// wouldn't dedupe across invocations.
+static LAST_RESCANNED_FOLDER: Mutex<Option<String>> = Mutex::new(None);
 
 fn run_query(conn: &Connection, query: &str, filters: &SearchFilters, keyword_mode: bool) -> rusqlite::Result<Vec<Entry>> {
     let (sql, params) = build_query(query, filters, keyword_mode);
@@ -238,9 +257,25 @@ pub fn search_files(
     filters: SearchFilters,
     keyword_mode: bool,
 ) -> Result<Vec<Entry>, String> {
+    // Do the blocking read_dir/metadata off the connection lock, and only when
+    // the scope actually changed (see collect_folder_rows/should_rescan docs).
+    let rows = match &filters.folder {
+        Some(folder) => {
+            let changed = {
+                let mut last = LAST_RESCANNED_FOLDER.lock().unwrap_or_else(|e| e.into_inner());
+                should_rescan(&mut last, folder)
+            };
+            if changed {
+                collect_folder_rows(folder)
+            } else {
+                Vec::new()
+            }
+        }
+        None => Vec::new(),
+    };
     let mut conn = conn.lock().map_err(|e| e.to_string())?;
-    if let Some(folder) = &filters.folder {
-        rescan_folder(&mut conn, folder);
+    if !rows.is_empty() {
+        let _ = database::upsert_batch(&mut conn, &rows);
     }
     run_query(&conn, &query, &filters, keyword_mode).map_err(|e| e.to_string())
 }
@@ -278,6 +313,15 @@ pub fn recent_files(conn: tauri::State<Mutex<Connection>>) -> Result<Vec<Entry>,
 mod tests {
     use super::*;
     use crate::database;
+
+    #[test]
+    fn should_rescan_only_on_folder_change() {
+        let mut last = None;
+        assert!(should_rescan(&mut last, "C:\\Docs"), "first scope should rescan");
+        assert!(!should_rescan(&mut last, "C:\\Docs"), "same scope should not rescan again");
+        assert!(should_rescan(&mut last, "C:\\Pics"), "changed scope should rescan");
+        assert!(!should_rescan(&mut last, "C:\\Pics"));
+    }
 
     fn seed_db(name: &str) -> (std::path::PathBuf, Connection) {
         let path = std::env::temp_dir().join(name);
@@ -525,7 +569,8 @@ mod tests {
         // Deliberately never upserted — the index has no idea this file exists yet.
 
         let filters = SearchFilters { folder: Some(dir.to_string_lossy().into_owned()), ..Default::default() };
-        rescan_folder(&mut conn, &filters.folder.clone().unwrap());
+        let rows = collect_folder_rows(&filters.folder.clone().unwrap());
+        database::upsert_batch(&mut conn, &rows).unwrap();
         let results = run_query(&conn, "brand_new", &filters, false).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "brand_new.txt");

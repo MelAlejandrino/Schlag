@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ChevronDown, Loader2, X } from "lucide-react";
 import { useSearch, useSearchTrigger } from "../useSearch";
 import { useFileExplorerStore } from "../store/file-explorer.store";
@@ -154,7 +154,7 @@ export function FilterBar() {
     };
   }, [showFilters]);
 
-  const matchCount = filterEntries(entries, filterQuery).length;
+  const matchCount = useMemo(() => filterEntries(entries, filterQuery).length, [entries, filterQuery]);
   const total = entries.length;
 
   // Enter/leave the Search+ level, carrying the typed text across so switching

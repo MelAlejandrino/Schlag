@@ -84,9 +84,10 @@ interface FileExplorerState {
   // per-session state. Default matches DESIGN.md's sidebar-width token.
   sidebarWidth: number;
   // A single global preference, not per-folder memory like real Explorer —
-  // a stated v1 scope limit, not an oversight. Persisted the same
-  // lasting-preference way as sidebarWidth. Stays global across
-  // tabs too, same reasoning — see setSortKey etc. below for how a change
+  // a stated v1 scope limit, not an oversight. NOT persisted by this store's
+  // `partialize` — the lasting defaults live in settings.store and are
+  // re-applied by init() on launch (settings.store is the source of truth).
+  // Stays global across tabs too — see setSortKey etc. below for how a change
   // still reaches every open tab's already-loaded entries, not just the
   // active one.
   sortKey: SortKey;
@@ -191,6 +192,7 @@ interface FileExplorerState {
   openDeleteConfirm: (target?: Entry[]) => void;
   closeDeleteConfirm: () => void;
   selectOnly: (path: string) => void;
+  selectAll: (paths: string[]) => void;
   toggleSelect: (path: string) => void;
   selectRange: (path: string) => void;
   ensureSelected: (path: string) => void;
@@ -723,6 +725,15 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         closeDeleteConfirm: () => set({ deleteConfirmOpen: false, deleteTarget: null }),
 
         selectOnly: (path: string) => applyTabPatch(get().activeTabId, { selectedPaths: [path], selectionAnchor: path }),
+
+        // Select-all in one store write. The old per-entry toggleSelect loop
+        // was O(N²) (each toggle does an includes + full array copy + tabs.map)
+        // and N sequential sets — a multi-second freeze on a large folder.
+        selectAll: (paths: string[]) =>
+          applyTabPatch(get().activeTabId, {
+            selectedPaths: paths,
+            selectionAnchor: paths.length > 0 ? paths[paths.length - 1] : null,
+          }),
 
         toggleSelect: (path: string) => {
           const { selectedPaths } = get();

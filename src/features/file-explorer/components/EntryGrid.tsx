@@ -144,7 +144,7 @@ export function EntryGrid({
     compute();
     const t = setTimeout(compute, 50);
     return () => clearTimeout(t);
-  }, [tile, entries]);
+    }, [tile, entries]);
 
   const rows = useMemo(() => buildRows(toDisplayItems(entries, groupBy), columns), [entries, groupBy, columns]);
   const tileRowSize = tile + 32;
@@ -180,8 +180,9 @@ export function EntryGrid({
 
   // Convert rows to GridRow[] for the hook — it needs to know which
   // rows are headers so ArrowUp/Down can skip them.
-  const gridRows: GridRow[] = rows.map((r) =>
-    r.kind === "header" ? { kind: "header" } : { kind: "tiles", entries: r.entries },
+  const gridRows: GridRow[] = useMemo(
+    () => rows.map((r) => (r.kind === "header" ? { kind: "header" } : { kind: "tiles", entries: r.entries })),
+    [rows],
   );
 
   // Arrow-key navigation, Enter-to-open, type-ahead jump-to-file.

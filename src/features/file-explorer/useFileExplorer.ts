@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { fileExplorerService } from "./services/file-explorer.service";
 import { useFileExplorerStore } from "./store/file-explorer.store";
 import { basename, dirname, joinPath } from "./lib/path";
@@ -24,11 +24,20 @@ export function useFileExplorer() {
   // organized by the current sort/group). Falls back to the folder's own
   // entries when no search is showing.
   const listingEntries = store.searchResults ?? store.entries;
-  const selectedEntries = listingEntries.filter((e) => store.selectedPaths.includes(e.path));
+  // Set membership, not Array.includes inside filter — this recomputes on
+  // every store change (whole-store subscription), so an includes-in-filter
+  // would be O(entries × selection), i.e. O(N²) after a select-all.
+  const selectedEntries = useMemo(() => {
+    const selectedSet = new Set(store.selectedPaths);
+    return listingEntries.filter((e) => selectedSet.has(e.path));
+  }, [listingEntries, store.selectedPaths]);
   // The rows the listing actually renders. For a folder, the "filter this
   // folder" query is applied client-side (a selected row hidden by the filter
   // stays selected but off-screen); search results are shown as-is.
-  const visibleEntries = store.searchResults ?? filterEntries(store.entries, store.filterQuery);
+  const visibleEntries = useMemo(
+    () => store.searchResults ?? filterEntries(store.entries, store.filterQuery),
+    [store.searchResults, store.entries, store.filterQuery],
+  );
   // Derived once per render, same as selectedEntries above, and reused by
   // every plain-function write-action guard below — a zip is read-only
   // browsing (plan.md's Phase 7 sketch). The useCallback handlers further

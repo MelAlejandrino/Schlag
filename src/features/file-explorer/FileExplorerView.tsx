@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { AlertCircle, X } from "lucide-react";
 import { useFileExplorer } from "./useFileExplorer";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
@@ -30,8 +30,14 @@ export function FileExplorerView() {
   const explorer = useFileExplorer();
 
   // Status-bar figures — files only (directory sizes aren't tracked).
-  const selectedSize = explorer.selectedEntries.reduce((sum, e) => sum + (e.is_dir ? 0 : e.size), 0);
-  const totalSize = explorer.visibleEntries.reduce((sum, e) => sum + (e.is_dir ? 0 : e.size), 0);
+  const selectedSize = useMemo(
+    () => explorer.selectedEntries.reduce((sum, e) => sum + (e.is_dir ? 0 : e.size), 0),
+    [explorer.selectedEntries],
+  );
+  const totalSize = useMemo(
+    () => explorer.visibleEntries.reduce((sum, e) => sum + (e.is_dir ? 0 : e.size), 0),
+    [explorer.visibleEntries],
+  );
 
   useKeyboardShortcuts({
     onRefresh: explorer.refresh,

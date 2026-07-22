@@ -7,7 +7,7 @@ use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::snippet::SnippetGenerator;
-use tantivy::{doc, Index, IndexWriter, TantivyDocument, Term};
+use tantivy::{doc, Index, IndexReader, IndexWriter, TantivyDocument, Term};
 use zip::ZipArchive;
 
 // ponytail: bounds pathological-file hang risk and per-doc Tantivy storage
@@ -265,6 +265,10 @@ pub struct ContentSearchResult {
 pub struct ContentIndexState {
     pub index: Index,
     pub schema: ContentSchema,
+    // One reader reused across all queries. Its default ReloadPolicy reloads
+    // the searcher automatically after the writer thread commits, so there's
+    // no need to rebuild a reader (re-opening segment readers) per query.
+    pub reader: IndexReader,
 }
 
 // Tantivy's `Snippet::to_html()` wraps matches in `<b>` but does NOT
@@ -282,7 +286,7 @@ pub fn search_content(
     keyword_mode: bool,
 ) -> Result<Vec<ContentSearchResult>, String> {
     let conn = conn.lock().map_err(|e| e.to_string())?;
-    run_content_query(&state.index, &state.schema, &conn, &query, folder, keyword_mode)
+    run_content_query(&state.index, &state.reader, &state.schema, &conn, &query, folder, keyword_mode)
 }
 
 // Tantivy's quoted-phrase syntax needs an embedded `"` escaped, or it would
@@ -310,13 +314,13 @@ fn keyword_query(raw: &str) -> String {
 // #[tauri::command] search_files.
 fn run_content_query(
     index: &Index,
+    reader: &IndexReader,
     schema: &ContentSchema,
     conn: &Connection,
     query: &str,
     folder: Option<String>,
     keyword_mode: bool,
 ) -> Result<Vec<ContentSearchResult>, String> {
-    let reader = index.reader().map_err(|e| e.to_string())?;
     let searcher = reader.searcher();
     let parser = QueryParser::for_index(index, vec![schema.content]);
     // Phrase mode wraps the whole query as a quoted phrase, not parsed as
@@ -448,10 +452,10 @@ mod tests {
         )
         .unwrap();
 
-        let all = run_content_query(&index, &schema, &conn, "quick", None, false).unwrap();
+        let all = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "quick", None, false).unwrap();
         assert_eq!(all.len(), 2, "unscoped query should match both indexed documents");
 
-        let scoped = run_content_query(&index, &schema, &conn, "quick", Some("C:\\Docs".to_string()), false).unwrap();
+        let scoped = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "quick", Some("C:\\Docs".to_string()), false).unwrap();
         assert_eq!(scoped.len(), 1, "folder-scoped query should exclude matches outside the folder");
         assert_eq!(scoped[0].path, "C:\\Docs\\a.txt");
         assert_eq!(scoped[0].name, "a.txt");
@@ -499,13 +503,13 @@ mod tests {
         )
         .unwrap();
 
-        let results = run_content_query(&index, &schema, &conn, "am a file", None, false).unwrap();
+        let results = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a file", None, false).unwrap();
         assert_eq!(results.len(), 1, "only the document containing the exact phrase should match");
         assert_eq!(results[0].path, "C:\\Docs\\contiguous.txt");
 
         // Keyword mode: both documents contain "am", "a", and "file" somewhere,
         // regardless of order/contiguity — unlike phrase mode above.
-        let mut keyword_results = run_content_query(&index, &schema, &conn, "am a file", None, true).unwrap();
+        let mut keyword_results = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a file", None, true).unwrap();
         keyword_results.sort_by(|a, b| a.path.cmp(&b.path));
         assert_eq!(
             keyword_results.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
@@ -514,7 +518,7 @@ mod tests {
         );
 
         // A document missing one of the words should not match keyword mode either.
-        let partial = run_content_query(&index, &schema, &conn, "am a nonexistentword", None, true).unwrap();
+        let partial = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a nonexistentword", None, true).unwrap();
         assert!(partial.is_empty(), "keyword mode must not match when only a subset of words is present");
 
         let _ = std::fs::remove_dir_all(&dir);

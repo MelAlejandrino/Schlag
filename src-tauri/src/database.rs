@@ -35,6 +35,13 @@ pub fn open(db_path: &Path) -> rusqlite::Result<Connection> {
     // actually fire when a file leaves the index (safe here — upsert uses
     // ON CONFLICT DO UPDATE, so re-indexing never deletes+recreates a row).
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    // Both connections open through here: the indexer's writer and lib.rs's
+    // reader connection (which is *also* written through by tags/rescan/fs_ops).
+    // WAL serializes writers with a lock; with the default busy_timeout of 0 a
+    // write that collides with the indexer's batched-commit lock fails instantly
+    // with SQLITE_BUSY — user-visible "database is locked" on tag edits, silently
+    // dropped rescans/upserts elsewhere. Wait for the lock instead.
+    conn.pragma_update(None, "busy_timeout", 5000)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY,
@@ -117,18 +124,6 @@ pub fn open(db_path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-// None means "never content-indexed" (or the path was removed from
-// `content_index_state`, e.g. after a delete) — the caller should extract.
-pub fn content_indexed_mtime(conn: &Connection, path: &str) -> rusqlite::Result<Option<u64>> {
-    conn.query_row(
-        "SELECT indexed_mtime FROM content_index_state WHERE path = ?1",
-        params![path],
-        |row| row.get::<_, i64>(0),
-    )
-    .map(|ms| Some(ms as u64))
-    .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
-}
-
 pub fn set_content_indexed_mtime(conn: &Connection, path: &str, modified_ms: u64) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO content_index_state (path, indexed_mtime) VALUES (?1, ?2)
@@ -149,6 +144,21 @@ pub fn set_content_indexed_mtime(conn: &Connection, path: &str, modified_ms: u64
 pub fn content_index_state_paths(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     conn.prepare("SELECT path FROM content_index_state")?
         .query_map([], |r| r.get::<_, String>(0))?
+        .collect()
+}
+
+// The whole content_index_state table as a path -> indexed_mtime map, loaded
+// once by the content-indexer thread so its "skip if unchanged" check is an
+// in-memory lookup instead of a per-file query that has to take the shared
+// connection lock (which the rayon scan workers are contending for during the
+// initial scan). Bounded by the number of extractable files ever indexed, not
+// the whole ~1M-row `files` table.
+// ponytail: loaded once at thread start and kept in sync in-memory; if content
+// indexing ever spans multiple writers this would need a real invalidation
+// story, but there's exactly one consumer thread today.
+pub fn load_content_index_state(conn: &Connection) -> rusqlite::Result<std::collections::HashMap<String, u64>> {
+    conn.prepare("SELECT path, indexed_mtime FROM content_index_state")?
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
         .collect()
 }
 
@@ -426,18 +436,19 @@ mod tests {
     #[test]
     fn content_indexed_mtime_round_trips_and_defaults_to_none() {
         let (path, mut conn) = temp_db("schlag_test_db_content_state.sqlite");
+        let get = |c: &Connection, p: &str| load_content_index_state(c).unwrap().get(p).copied();
 
-        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), None);
+        assert_eq!(get(&conn, "C:\\a.txt"), None);
 
         set_content_indexed_mtime(&conn, "C:\\a.txt", 1_700_000_000_000).unwrap();
-        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), Some(1_700_000_000_000));
+        assert_eq!(get(&conn, "C:\\a.txt"), Some(1_700_000_000_000));
 
         // Re-setting the same path updates in place, not a second row.
         set_content_indexed_mtime(&conn, "C:\\a.txt", 1_700_000_500_000).unwrap();
-        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), Some(1_700_000_500_000));
+        assert_eq!(get(&conn, "C:\\a.txt"), Some(1_700_000_500_000));
 
         delete_content_indexed_mtime_batch(&mut conn, &["C:\\a.txt".to_string()]).unwrap();
-        assert_eq!(content_indexed_mtime(&conn, "C:\\a.txt").unwrap(), None);
+        assert_eq!(get(&conn, "C:\\a.txt"), None);
 
         let _ = std::fs::remove_file(&path);
     }
@@ -457,6 +468,22 @@ mod tests {
         delete_content_indexed_mtime_batch(&mut conn, &["C:\\a.txt".to_string(), "C:\\c.txt".to_string()]).unwrap();
         let remaining = content_index_state_paths(&conn).unwrap();
         assert_eq!(remaining, vec!["C:\\b.txt"]);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_content_index_state_returns_path_to_mtime_map() {
+        let (path, conn) = temp_db("schlag_test_db_load_content_state.sqlite");
+
+        set_content_indexed_mtime(&conn, "C:\\a.txt", 1_700_000_000_000).unwrap();
+        set_content_indexed_mtime(&conn, "C:\\b.txt", 1_700_000_500_000).unwrap();
+
+        let map = load_content_index_state(&conn).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("C:\\a.txt"), Some(&1_700_000_000_000));
+        assert_eq!(map.get("C:\\b.txt"), Some(&1_700_000_500_000));
+        assert_eq!(map.get("C:\\missing.txt"), None);
 
         let _ = std::fs::remove_file(&path);
     }

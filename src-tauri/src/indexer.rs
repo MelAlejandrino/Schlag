@@ -35,7 +35,14 @@ pub struct ContentEventSender {
 
 impl ContentEventSender {
     pub fn queue_index(&self, path: &Path, modified_ms: u64) {
-        let _ = self.tx.send(ContentEvent::Index(path.to_path_buf(), modified_ms));
+        // Guard on extractability here too (like queue_content_event's internal
+        // path), so fs_ops callers don't queue non-extractable files (.exe,
+        // extensionless, etc.) that the content indexer would only lock,
+        // re-check, and discard.
+        let extractable = path.extension().and_then(|e| e.to_str()).map(content_index::is_extractable).unwrap_or(false);
+        if extractable {
+            let _ = self.tx.send(ContentEvent::Index(path.to_path_buf(), modified_ms));
+        }
     }
 
     pub fn queue_remove(&self, path: &Path) {
@@ -425,7 +432,7 @@ pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, conten
         // yet" and never get indexed at all — this was a real, reachable
         // bug (create a file mid-scan via the OS's own file explorer, it
         // never shows up in search). Events queue harmlessly until drained.
-        let (_watchers, rx) = start_watchers(&drives);
+        let (watchers, rx) = start_watchers(&drives);
 
         // Shared with the drain thread below, so live changes get applied
         // *during* the scan (which can take minutes on a large drive)
@@ -463,7 +470,17 @@ pub fn spawn(db_path: PathBuf, drives: Vec<String>, content_index: Index, conten
         prune_stale_content_state(&conn, &inner_tx);
 
         let drain_content_tx = inner_tx.clone();
-        std::thread::spawn(move || drain_events(&drain_conn, rx, &drain_content_tx));
+        std::thread::spawn(move || {
+            // Keep the watchers alive for as long as we drain events. Dropping
+            // a RecommendedWatcher stops its OS watch and drops its channel
+            // sender; binding them in spawn()'s outer closure meant they were
+            // dropped the moment the initial scan finished (that closure
+            // returns right after the scan), which silently killed all live
+            // file-watching post-scan. drain_events blocks forever, so moving
+            // them here ties their lifetime to the process instead.
+            let _watchers = watchers;
+            drain_events(&drain_conn, rx, &drain_content_tx);
+        });
 
         // Scan the user's own files first so useful results exist quickly,
         // instead of making them wait for the whole drive to finish. It gets
@@ -772,6 +789,25 @@ fn apply_event(conn: &Connection, event: notify::Event, content_tx: &Sender<Cont
                 }
             }
         }
+        // Some backends deliver a rename as separate From/To events instead of
+        // a single Both pair. The To half is a normal upsert (handled by the
+        // catch-all below); the From half must delete the old path, or its row
+        // lingers in the index until the next-restart prune (it fails
+        // row_from_path in the catch-all — the file's gone — so nothing there
+        // removes it).
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
+            for path in &event.paths {
+                if path_is_excluded(path) {
+                    continue;
+                }
+                if let Some(p) = path.to_str() {
+                    if let Err(e) = database::delete_by_path(conn, p) {
+                        tracing::warn!("failed to remove renamed-from {p} from index: {e}");
+                    }
+                }
+                queue_content_removal(content_tx, path);
+            }
+        }
         EventKind::Create(_) | EventKind::Modify(_) => {
             for path in &event.paths {
                 if path_is_excluded(path) {
@@ -825,11 +861,21 @@ fn run_content_indexer(
     // change), same class of fix already applied to database::delete_batch.
     let mut pending_removals: Vec<String> = Vec::new();
 
+    // Path -> last-indexed mtime, loaded once so the skip-if-unchanged check
+    // below is an in-memory lookup rather than a per-file query under the
+    // shared connection lock. Kept in sync as we index/remove.
+    let mut indexed_mtimes = conn
+        .lock()
+        .ok()
+        .and_then(|c| database::load_content_index_state(&c).ok())
+        .unwrap_or_default();
+
     for event in rx {
         match event {
             ContentEvent::Remove(path) => {
                 let path_str = path.to_string_lossy().into_owned();
                 content_index::remove_path(&writer, &schema, &path_str);
+                indexed_mtimes.remove(&path_str);
                 pending_removals.push(path_str);
                 since_commit += 1;
             }
@@ -840,13 +886,7 @@ fn run_content_indexer(
                 // indexed — the metadata scan re-walks every drive on every
                 // launch, and content extraction is far too expensive to
                 // redo unconditionally on files that haven't changed.
-                let already_current = conn
-                    .lock()
-                    .ok()
-                    .and_then(|c| database::content_indexed_mtime(&c, &path_str).ok().flatten())
-                    .map(|indexed_ms| indexed_ms == modified_ms)
-                    .unwrap_or(false);
-                if already_current {
+                if indexed_mtimes.get(&path_str) == Some(&modified_ms) {
                     continue;
                 }
 
@@ -870,6 +910,7 @@ fn run_content_indexer(
                             if let Ok(conn) = conn.lock() {
                                 let _ = database::set_content_indexed_mtime(&conn, &path_str, modified_ms);
                             }
+                            indexed_mtimes.insert(path_str, modified_ms);
                             status.content_indexed_count.fetch_add(1, Ordering::Relaxed);
                             since_commit += 1;
                         }
@@ -1300,6 +1341,43 @@ mod tests {
             &test_content_tx(),
         );
         assert_eq!(database::count(&conn).unwrap(), 0, "deleting a file should remove it from the index even though its recycle-bin destination is excluded");
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_file(&db_path);
+    }
+
+    // Some backends deliver a rename as separate From/To events rather than a
+    // single Both pair. The From half must delete the old path, or its row
+    // lingers in the index until the next-restart prune.
+    #[test]
+    fn apply_event_split_rename_from_removes_old_path() {
+        let base = test_scratch_dir().join("schlag_test_indexer_split_rename");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let file = base.join("old.txt");
+        fs::write(&file, b"hi").unwrap();
+
+        let db_path = test_scratch_dir().join("schlag_test_indexer_split_rename.sqlite");
+        let _ = fs::remove_file(&db_path);
+        let conn = database::open(&db_path).unwrap();
+
+        apply_event(
+            &conn,
+            notify::Event { kind: EventKind::Create(notify::event::CreateKind::File), paths: vec![file.clone()], attrs: Default::default() },
+            &test_content_tx(),
+        );
+        assert_eq!(database::count(&conn).unwrap(), 1);
+
+        apply_event(
+            &conn,
+            notify::Event {
+                kind: EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+                paths: vec![file.clone()],
+                attrs: Default::default(),
+            },
+            &test_content_tx(),
+        );
+        assert_eq!(database::count(&conn).unwrap(), 0, "a split-rename From event should remove the old path from the index");
 
         let _ = fs::remove_dir_all(&base);
         let _ = fs::remove_file(&db_path);
