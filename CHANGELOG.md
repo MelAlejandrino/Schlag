@@ -2,6 +2,15 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.3] - 2026-07-22
+
+### Added
+
+- **File tagging system:** Create, assign, and manage color-coded tags on files directly from the context menu. Tags persist in the index database and survive renames/moves.
+- **Tag-based search filtering:** Search+ now includes a Tags filter field, allowing files to be filtered by one or more tags (AND logic). Tag suggestions appear as you type.
+- **Tag chips in entry views:** Assigned tags display as colored chips next to file names in both grid and table views.
+- **Context menu Tags flyout:** A "Tags ▸" submenu in the right-click context menu provides quick tag toggling and inline tag creation without leaving the menu.
+
 ## [1.0.2] - 2026-07-20
 
 ### Added
