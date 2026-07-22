@@ -2,6 +2,16 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.4] - 2026-07-22
+
+### Added
+
+- **What's New settings tab:** Dedicated tab for checking updates and browsing the full changelog, parsed live from CHANGELOG.md — release history renders automatically with each build.
+
+### Changed
+
+- **Updates section moved:** Auto-update controls relocated from About to the new What's New tab.
+
 ## [1.0.3] - 2026-07-22
 
 ### Added
