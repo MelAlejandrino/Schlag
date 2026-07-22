@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { OWNER_URL, REPO_NAME, REPO_OWNER, REPO_URL } from "../lib/repo";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
   ArrowLeft,
@@ -13,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Settings,
+  Sparkles,
   User,
   X,
 } from "lucide-react";
@@ -135,6 +137,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: "about", label: "About Schlag", icon: Info },
+  { id: "whats-new", label: "What's New", icon: Sparkles },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "general", label: "General", icon: Settings },
   { id: "indexing", label: "Indexing", icon: FolderSearch },
@@ -194,6 +197,7 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
         </button>
 
         {store.activeSection === "about" && <AboutSection />}
+        {store.activeSection === "whats-new" && <WhatsNewSection />}
         {store.activeSection === "appearance" && <AppearanceSection />}
         {store.activeSection === "general" && <GeneralSection />}
         {store.activeSection === "indexing" && <IndexingSection />}
@@ -229,7 +233,6 @@ function LinkRow({
 
 function AboutSection() {
   const [version, setVersion] = useState("");
-  const updater = useUpdater();
 
   useEffect(() => {
     getVersion().then(setVersion);
@@ -279,18 +282,135 @@ function AboutSection() {
         <div className="flex flex-col gap-1.5">
           <LinkRow
             icon={GitFork}
-            label="Schlag on GitHub"
-            url="https://github.com/MelAlejandrino/Schlag"
+            label={`${REPO_NAME} on GitHub`}
+            url={REPO_URL}
           />
           <LinkRow
             icon={User}
-            label="Developer: MelAlejandrino"
-            url="https://github.com/MelAlejandrino"
+            label={`Developer: ${REPO_OWNER}`}
+            url={OWNER_URL}
           />
         </div>
       </Section>
+    </div>
+  );
+}
 
-      <hr className="border-surface-container-highest" />
+// ─── What's New ─────────────────────────────────────────────────
+
+import changelogRaw from "../../../../CHANGELOG.md?raw";
+
+type ChangeCategory = "added" | "fixed" | "changed" | "removed";
+
+interface ReleaseEntry {
+  version: string;
+  date: string;
+  added?: string[];
+  fixed?: string[];
+  changed?: string[];
+  removed?: string[];
+}
+
+const CATEGORY_LABELS: Record<ChangeCategory, string> = {
+  added: "Added",
+  fixed: "Fixed",
+  changed: "Changed",
+  removed: "Removed",
+};
+
+const CATEGORY_ORDER: ChangeCategory[] = ["added", "fixed", "changed", "removed"];
+
+const PARSED_RELEASES: ReleaseEntry[] = (() => {
+  const releases: ReleaseEntry[] = [];
+  let current: ReleaseEntry | null = null;
+  let currentCategory: ChangeCategory | null = null;
+
+  for (const line of changelogRaw.split("\n")) {
+    const versionMatch = line.match(/^## \[(.+?)\] - (.+)$/);
+    if (versionMatch) {
+      current = { version: versionMatch[1], date: versionMatch[2] };
+      releases.push(current);
+      currentCategory = null;
+      continue;
+    }
+
+    if (current) {
+      const catMatch = line.match(/^### (\w+)$/i);
+      if (catMatch) {
+        const lower = catMatch[1].toLowerCase() as ChangeCategory;
+        if (CATEGORY_LABELS[lower]) {
+          currentCategory = lower;
+          if (!current[currentCategory]) current[currentCategory] = [];
+        }
+        continue;
+      }
+
+      if (currentCategory && current[currentCategory]) {
+        const bulletMatch = line.match(/^- (.+)$/);
+        if (bulletMatch) {
+          current[currentCategory]!.push(bulletMatch[1]);
+        }
+      }
+    }
+  }
+
+  return releases;
+})();
+
+/** Renders a string, turning **bold** segments into <strong> elements. */
+function renderBold(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const regex = /\*\*(.+?)\*\*/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <strong key={match.index} className="font-medium text-on-surface">
+        {match[1]}
+      </strong>,
+    );
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts;
+}
+
+function WhatsNewSection() {
+  const [version, setVersion] = useState("");
+  const updater = useUpdater();
+
+  useEffect(() => {
+    getVersion().then(setVersion);
+  }, []);
+
+  return (
+    <div className="flex max-w-xl flex-col gap-6">
+      <div>
+        <h2 className="text-[18px] font-semibold text-on-surface">What's New</h2>
+        <p className="mt-1 max-w-[60ch] text-[13px] text-on-surface-variant">
+          Check for updates and see what's changed in each release.
+        </p>
+      </div>
+
+      <Section title="Current Version">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-container/20">
+            <Sparkles size={20} strokeWidth={1.75} className="text-primary" />
+          </div>
+          <div>
+            <p className="text-[14px] font-medium text-on-surface">Schlag</p>
+            <p className="font-mono text-[11px] text-outline">Version {version || "…"}</p>
+          </div>
+        </div>
+      </Section>
 
       <Section title="Updates">
         <div className="flex items-center gap-3">
@@ -350,6 +470,41 @@ function AboutSection() {
             </button>
           </div>
         )}
+      </Section>
+
+      <hr className="border-surface-container-highest" />
+
+      <Section title="Changelog">
+        <div className="flex flex-col gap-5">
+          {PARSED_RELEASES.map((release) => (
+            <div key={release.version} className="flex flex-col gap-2">
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono text-[13px] font-medium text-on-surface">v{release.version}</span>
+                <span className="text-[11px] text-outline">{release.date}</span>
+              </div>
+
+              {CATEGORY_ORDER.map((cat) => {
+                const items = release[cat];
+                if (!items || items.length === 0) return null;
+                return (
+                  <div key={cat} className="flex flex-col gap-1">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-primary">
+                      {CATEGORY_LABELS[cat]}
+                    </span>
+                    <ul className="flex flex-col gap-0.5">
+                      {items.map((item, i) => (
+                        <li key={i} className="flex gap-2 text-[12px] leading-relaxed text-on-surface-variant">
+                          <span className="mt-1.5 shrink-0 h-1 w-1 rounded-full bg-primary" />
+                          <span>{renderBold(item)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
       </Section>
     </div>
   );
