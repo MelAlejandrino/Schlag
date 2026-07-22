@@ -2,6 +2,22 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.6] - 2026-07-22
+
+### Fixed
+
+- **Window controls fill full height on settings page:** Title-bar window controls now stretch to cover the full height of the settings page.
+- **Database locked errors on tag edits:** Added WAL busy timeout so concurrent indexer writes no longer fail with `SQLITE_BUSY` when the user edits tags.
+- **File watcher killed after initial scan:** `RecommendedWatcher` handles are now kept alive for the process lifetime instead of being dropped when the scan closure returns — live filesystem watching no longer silently stops after the first scan.
+- **Stale index entries after split renames:** The indexer now handles `RenameMode::From` events delivered as separate halves, removing the old path from the index immediately.
+
+### Changed
+
+- **Content search reader cached:** A single `IndexReader` is reused across all Tantivy queries instead of reopening a new reader per query, eliminating repeated segment-reader setup overhead.
+- **Folder rescan moved off connection lock:** `read_dir` + metadata I/O for scoped search now runs before acquiring the database lock, and only rescans when the scope folder actually changes — scoped searches no longer block other index consumers on I/O.
+- **Select-all is now O(N):** Replaced the per-entry `toggleSelect` loop (O(N²) with large selections) with a single store write; status bar size sums and grid row mapping are memoized to avoid redundant recomputation.
+- **Content index skip non-extractable files early:** The content indexer now filters out non-extractable files (`.exe`, extensionless, etc.) at queue time instead of locking and discarding them later.
+
 ## [1.0.5] - 2026-07-22
 
 ### Fixed
