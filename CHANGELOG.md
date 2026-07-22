@@ -2,6 +2,12 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.5] - 2026-07-22
+
+### Fixed
+
+- **Changelog section empty on Windows:** Stripped carriage returns before parsing CHANGELOG.md so category headers and bullet items are correctly collected.
+
 ## [1.0.4] - 2026-07-22
 
 ### Added
