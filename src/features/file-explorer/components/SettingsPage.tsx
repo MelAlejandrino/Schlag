@@ -325,7 +325,7 @@ const PARSED_RELEASES: ReleaseEntry[] = (() => {
   let current: ReleaseEntry | null = null;
   let currentCategory: ChangeCategory | null = null;
 
-  for (const line of changelogRaw.split("\n")) {
+  for (const line of changelogRaw.replace(/\r/g, "").split("\n")) {
     const versionMatch = line.match(/^## \[(.+?)\] - (.+)$/);
     if (versionMatch) {
       current = { version: versionMatch[1], date: versionMatch[2] };
