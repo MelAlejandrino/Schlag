@@ -25,6 +25,20 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Extract changelog for this version
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the section between ## [x.y.z] and the next ## [ or end of file.
+          NOTES=$(sed -n "/^## \[$VERSION\]/,/^## \[/p" CHANGELOG.md | sed '$ { /^## \[/d }')
+          # Use a delimiter that won't appear in the notes.
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$NOTES"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,5 +47,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Schlag ${{ github.ref_name }}"
+          releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: true
           prerelease: false

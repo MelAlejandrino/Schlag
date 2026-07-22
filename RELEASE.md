@@ -11,6 +11,9 @@ itself, and the mistakes below each caused a broken or asset-less release.
   `tauri-apps/tauri-action`, which **builds the app and uploads all 7 bundle
   assets** (msi, nsis, sig files, `latest.json`, etc.) to a **draft** GitHub
   Release (`releaseDraft: true`).
+- **Release notes** are automatically pulled from `CHANGELOG.md` — the workflow
+  extracts the `## [x.y.z]` section matching the tag and sets it as the release
+  body. Make sure the changelog entry exists and is accurate before tagging.
 - A human reviews the draft and publishes it. CI publishing a draft ≠ "ready
   for every existing install to auto-update to."
 
