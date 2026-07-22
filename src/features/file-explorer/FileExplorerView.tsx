@@ -315,8 +315,8 @@ export function FileExplorerView() {
 
 function SettingsTitleBar() {
   return (
-    <div className="flex h-9 shrink-0 items-center border-b border-surface-container-highest bg-surface-container-low">
-      <span className="ml-3 text-[12px] font-medium text-on-surface">Settings</span>
+    <div className="flex h-9 shrink-0 items-stretch border-b border-surface-container-highest bg-surface-container-low">
+      <span className="ml-3 self-center text-[12px] font-medium text-on-surface">Settings</span>
       <span className="flex-1 self-stretch" data-tauri-drag-region />
       <WindowControls />
     </div>
