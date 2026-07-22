@@ -100,6 +100,7 @@ export function FilterBar() {
   const [filtersPos, setFiltersPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const activeFilterCount = countActiveFilters(search.filters);
   const folderPathSuggestions = folderSuggestions(favorites, quickAccess);
+  const tags = useFileExplorerStore((s) => s.tags);
   const activeResults: Entry[] = search.mode === "content" ? search.orderedContentResults : search.orderedResults;
 
   // Push Search+ results into the main listing (or clear it back to the
@@ -423,7 +424,7 @@ export function FilterBar() {
           className="pointer-events-auto fixed z-50 animate-menu-in rounded-lg border border-surface-container-highest bg-surface-container-high shadow-lg"
           style={{ top: filtersPos.top, left: filtersPos.left }}
         >
-          <SearchFiltersFields filters={search.filters} onChange={search.setFilters} folderSuggestions={folderPathSuggestions} />
+          <SearchFiltersFields filters={search.filters} onChange={search.setFilters} folderSuggestions={folderPathSuggestions} tags={tags} />
         </div>
       )}
     </div>

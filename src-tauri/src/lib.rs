@@ -5,6 +5,7 @@ mod indexer;
 mod preview;
 mod search;
 mod settings;
+mod tags;
 mod terminal;
 
 use std::sync::Mutex;
@@ -87,6 +88,12 @@ pub fn run() {
             settings::get_settings,
             settings::update_settings,
             settings::get_storage_info,
+            tags::get_tags,
+            tags::create_tag,
+            tags::delete_tag,
+            tags::get_all_file_tags,
+            tags::add_file_tag,
+            tags::remove_file_tag,
             terminal::terminal_open,
             terminal::terminal_write,
             terminal::terminal_resize,

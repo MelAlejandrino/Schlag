@@ -122,6 +122,10 @@ export function RecentFiles({ className = "" }: { className?: string }) {
             onRefresh={() => {}}
             onToggleFavorite={() => {}}
             onSearchInFolder={() => {}}
+            allTags={explorer.allTags}
+            selectedFileTags={explorer.getFileTags(rowMenu.entry.path)}
+            onToggleFileTag={(tagId) => explorer.toggleFileTag(rowMenu.entry.path, tagId)}
+            onCreateTag={(name) => explorer.createAndApplyTag(rowMenu.entry.path, name)}
           />
         </div>
       )}

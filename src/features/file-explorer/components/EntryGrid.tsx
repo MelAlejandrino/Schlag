@@ -6,6 +6,7 @@ import { useDropTarget } from "../lib/useDropTarget";
 import { useEntryKeyboard, type GridRow } from "../lib/useEntryKeyboard";
 import { previewKind } from "../lib/previewKind";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
+import { FileTagChips } from "./FileTagChips";
 import { fileExplorerService } from "../services/file-explorer.service";
 import type { DisplayItem, GroupBy } from "../lib/groupEntries";
 import { toDisplayItems } from "../lib/groupEntries";
@@ -33,6 +34,7 @@ interface EntryGridProps {
   onSelectRange: (path: string) => void;
   onDelete: () => void;
   onRename: () => void;
+  getFileTags?: (path: string) => { id: number; name: string; color: string }[];
 }
 
 const TILE_SIZE: Record<EntryGridProps["size"], { tile: number; icon: number }> = {
@@ -103,6 +105,7 @@ export function EntryGrid({
   onSelectRange,
   onDelete,
   onRename,
+  getFileTags,
 }: EntryGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { tile, icon } = TILE_SIZE[size];
@@ -321,20 +324,21 @@ export function EntryGrid({
                     onBackgroundContextMenu(e.clientX, e.clientY);
                   }}
                 >
-                  {row.entries.map((entry) => (
-                    <EntryTile
-                      key={entry.path}
-                      entry={entry}
-                      iconSize={icon}
-                      selected={selectedPaths.includes(entry.path)}
-                      cut={cutPaths.includes(entry.path)}
-                      onOpen={onOpen}
-                      onSelect={handleSelect}
-                      onContextMenu={onContextMenu}
-                      onDragPaths={onDragPaths}
-                      onDrop={onDrop}
-                    />
-                  ))}
+                    {row.entries.map((entry) => (
+                      <EntryTile
+                        key={entry.path}
+                        entry={entry}
+                        iconSize={icon}
+                        selected={selectedPaths.includes(entry.path)}
+                        cut={cutPaths.includes(entry.path)}
+                        onOpen={onOpen}
+                        onSelect={handleSelect}
+                        onContextMenu={onContextMenu}
+                        onDragPaths={onDragPaths}
+                        onDrop={onDrop}
+                        getFileTags={getFileTags}
+                      />
+                    ))}
                 </div>
               )}
             </div>
@@ -355,6 +359,7 @@ interface EntryTileProps {
   onContextMenu: (entry: Entry, x: number, y: number) => void;
   onDragPaths: (entry: Entry) => string[];
   onDrop: (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
+  getFileTags?: (path: string) => { id: number; name: string; color: string }[];
 }
 
 const EntryTile = memo(function EntryTile({
@@ -367,6 +372,7 @@ const EntryTile = memo(function EntryTile({
   onContextMenu,
   onDragPaths,
   onDrop,
+  getFileTags,
 }: EntryTileProps) {
   const dropTarget = useDropTarget(entry.path, onDrop);
   // Stops propagation so a drop that lands on this specific tile doesn't
@@ -441,6 +447,9 @@ const EntryTile = memo(function EntryTile({
       <span className={`line-clamp-2 w-full break-words text-[12px] ${selected ? "text-primary" : "text-on-surface"}`}>
         {entry.name}
       </span>
+      {getFileTags && (
+        <FileTagChips tags={getFileTags(entry.path)} max={2} className="flex w-full flex-wrap items-center justify-center gap-1" />
+      )}
     </div>
   );
 });

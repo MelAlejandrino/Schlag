@@ -16,6 +16,7 @@ pub struct SearchFilters {
     modified_before_ms: Option<u64>,
     folder: Option<String>,
     regex: Option<String>,
+    tags: Option<Vec<String>>,
 }
 
 thread_local! {
@@ -170,6 +171,22 @@ fn build_query(query: &str, filters: &SearchFilters, keyword_mode: bool) -> (Str
     if let Some(pattern) = &filters.regex {
         sql.push_str(&format!(" AND files.name REGEXP ?{}", params.len() + 1));
         params.push(Box::new(pattern.clone()));
+    }
+    if let Some(tags) = &filters.tags {
+        if !tags.is_empty() {
+            let placeholders: Vec<String> = (0..tags.len())
+                .map(|i| format!("?{}", params.len() + 1 + i))
+                .collect();
+            sql.push_str(&format!(
+                " AND files.path IN (SELECT file_tags.file_path FROM file_tags JOIN tags ON tags.id = file_tags.tag_id WHERE tags.name IN ({}) GROUP BY file_tags.file_path HAVING COUNT(DISTINCT tags.id) = ?{})",
+                placeholders.join(", "),
+                params.len() + 1 + tags.len()
+            ));
+            for tag in tags {
+                params.push(Box::new(tag.clone()));
+            }
+            params.push(Box::new(tags.len() as i64));
+        }
     }
 
     sql.push_str(&format!(" ORDER BY files.name LIMIT {RESULT_LIMIT}"));
@@ -653,6 +670,47 @@ mod tests {
 
         let results = run_query(&conn, "match", &SearchFilters::default(), false).unwrap();
         assert_eq!(results.len(), RESULT_LIMIT as usize);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tags_filter_requires_all_selected_tags_to_be_present() {
+        let (path, conn) = seed_db("schlag_test_search_tags.sqlite");
+
+        // Two tags; report.txt gets both, report_final.txt gets only "work".
+        conn.execute("INSERT INTO tags (name, color) VALUES ('work', '#111'), ('urgent', '#222')", []).unwrap();
+        conn.execute(
+            "INSERT INTO file_tags (file_path, tag_id) VALUES
+                ('C:\\Users\\carlo\\Documents\\report.txt', (SELECT id FROM tags WHERE name='work')),
+                ('C:\\Users\\carlo\\Documents\\report.txt', (SELECT id FROM tags WHERE name='urgent')),
+                ('C:\\Users\\carlo\\Documents\\report_final.txt', (SELECT id FROM tags WHERE name='work'))",
+            [],
+        )
+        .unwrap();
+
+        // Single tag: both tagged files match.
+        let one = SearchFilters { tags: Some(vec!["work".into()]), ..Default::default() };
+        let results = run_query(&conn, "report", &one, false).unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Both tags (AND): only the file carrying both.
+        let both = SearchFilters { tags: Some(vec!["work".into(), "urgent".into()]), ..Default::default() };
+        let results = run_query(&conn, "report", &both, false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "report.txt");
+
+        // ON DELETE CASCADE (via foreign_keys=ON): deleting the file's row
+        // removes its file_tags too, so it drops out of a tag-filtered search.
+        database::delete_by_path(&conn, "C:\\Users\\carlo\\Documents\\report.txt").unwrap();
+        let orphans: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_tags WHERE file_path = 'C:\\Users\\carlo\\Documents\\report.txt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0, "file_tags rows should cascade-delete with the file");
+
         let _ = std::fs::remove_file(&path);
     }
 }

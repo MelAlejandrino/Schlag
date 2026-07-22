@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, type DragEvent } from "r
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronUp, Folder } from "lucide-react";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
+import { FileTagChips } from "./FileTagChips";
 import { formatDate, formatSize } from "../lib/format";
 import { entryTypeLabel } from "../lib/entryType";
 import { startDrag } from "../lib/dnd";
@@ -46,6 +47,7 @@ interface EntryTableProps {
   onSelectRange: (path: string) => void;
   onDelete: () => void;
   onRename: () => void;
+  getFileTags?: (path: string) => { id: number; name: string; color: string }[];
 }
 
 // Shared between the header and every virtualized row so columns stay
@@ -134,6 +136,7 @@ export function EntryTable({
   onSelectRange,
   onDelete,
   onRename,
+  getFileTags,
 }: EntryTableProps) {
   // Targets the folder being browsed itself — dropping anywhere that isn't
   // a specific row (a row's own drop target, see EntryRow, stops
@@ -345,6 +348,7 @@ export function EntryTable({
                   onContextMenu={onContextMenu}
                   onDragPaths={onDragPaths}
                   onDrop={onDrop}
+                  getFileTags={getFileTags}
                 />
               )}
             </div>
@@ -365,6 +369,7 @@ interface EntryRowProps {
   onContextMenu: (entry: Entry, x: number, y: number) => void;
   onDragPaths: (entry: Entry) => string[];
   onDrop: (sourcePaths: string[], targetPath: string, isCopy: boolean) => void;
+  getFileTags?: (path: string) => { id: number; name: string; color: string }[];
 }
 
 const EntryRow = memo(function EntryRow({
@@ -377,6 +382,7 @@ const EntryRow = memo(function EntryRow({
   onContextMenu,
   onDragPaths,
   onDrop,
+  getFileTags,
 }: EntryRowProps) {
   const dropTarget = useDropTarget(entry.path, onDrop);
   // Stops propagation so a drop that lands on this specific folder row
@@ -432,6 +438,9 @@ const EntryRow = memo(function EntryRow({
             {entry.name}
           </span>
         </span>
+        {getFileTags && (
+          <FileTagChips tags={getFileTags(entry.path)} max={2} className="ml-2 flex shrink-0 items-center gap-1" />
+        )}
       </div>
       <div role="gridcell" className="flex items-center px-3 font-mono text-[12px] text-on-surface-variant">
         {formatDate(entry.modified_ms)}

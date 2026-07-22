@@ -5,10 +5,12 @@ import type {
   AppSettings,
   ContentSearchResult,
   Entry,
+  FileTag,
   IndexStatus,
   QuickAccessDir,
   SearchFilters,
   StorageInfo,
+  Tag,
 } from "../file-explorer.types";
 
 export const fileExplorerService = {
@@ -66,4 +68,10 @@ export const fileExplorerService = {
     listen<{ id: number; data: string }>("terminal-output", (e) => onData(e.payload.id, e.payload.data)),
   onTerminalExit: (onExit: (id: number) => void) =>
     listen<{ id: number }>("terminal-exit", (e) => onExit(e.payload.id)),
+  getTags: () => invoke<Tag[]>("get_tags"),
+  createTag: (name: string, color: string) => invoke<Tag>("create_tag", { name, color }),
+  deleteTag: (id: number) => invoke<void>("delete_tag", { id }),
+  getAllFileTags: () => invoke<FileTag[]>("get_all_file_tags"),
+  addFileTag: (path: string, tagId: number) => invoke<void>("add_file_tag", { path, tagId }),
+  removeFileTag: (path: string, tagId: number) => invoke<void>("remove_file_tag", { path, tagId }),
 };

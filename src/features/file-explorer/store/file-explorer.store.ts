@@ -16,6 +16,7 @@ import {
   type ContextMenuState,
   type Entry,
   type QuickAccessDir,
+  type Tag,
 } from "../file-explorer.types";
 
 export type ViewMode = "list" | "medium" | "large";
@@ -77,6 +78,8 @@ interface FileExplorerState {
   quickAccess: QuickAccessDir[];
   drives: QuickAccessDir[];
   favorites: string[];
+  tags: Tag[];
+  fileTags: Record<string, Tag[]>;
   // Persisted the same way favorites is — a lasting per-user preference, not
   // per-session state. Default matches DESIGN.md's sidebar-width token.
   sidebarWidth: number;
@@ -172,6 +175,13 @@ interface FileExplorerState {
   setGroupOrder: (direction: SortDirection) => void;
   setViewMode: (mode: ViewMode) => void;
   toggleFavorite: (path: string) => void;
+  loadTags: () => Promise<void>;
+  createTag: (name: string, color: string) => Promise<Tag>;
+  deleteTag: (id: number) => Promise<void>;
+  getFileTags: (path: string) => Tag[];
+  loadAllFileTags: () => Promise<void>;
+  addFileTag: (path: string, tagId: number) => Promise<void>;
+  removeFileTag: (path: string, tagId: number) => Promise<void>;
   openContextMenu: (x: number, y: number, background?: boolean) => void;
   closeContextMenu: () => void;
   openPrompt: (kind: PromptKind, target?: Entry) => void;
@@ -246,6 +256,8 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         quickAccess: [],
         drives: [],
         favorites: [],
+        tags: [],
+        fileTags: {},
         sidebarWidth: 240,
         sortKey: "name",
         sortDirection: "asc",
@@ -289,6 +301,8 @@ export const useFileExplorerStore = create<FileExplorerState>()(
               fileExplorerService.quickAccessDirs(),
               fileExplorerService.listDrives(),
             ]);
+
+            await Promise.all([get().loadTags(), get().loadAllFileTags()]);
 
             // Resolve startup path from settings.
             const settings = useSettingsStore.getState();
@@ -596,6 +610,104 @@ export const useFileExplorerStore = create<FileExplorerState>()(
               ? favorites.filter((f) => f !== path)
               : [...favorites, path],
           });
+        },
+
+        loadTags: async () => {
+          try {
+            const tags = await fileExplorerService.getTags();
+            set({ tags });
+          } catch (e) {
+            useFileExplorerStore.setState({ error: String(e) });
+          }
+        },
+
+        createTag: async (name: string, color: string) => {
+          try {
+            const tag = await fileExplorerService.createTag(name, color);
+            set({ tags: [...get().tags, tag] });
+            return tag;
+          } catch (e) {
+            useFileExplorerStore.setState({ error: String(e) });
+            throw e;
+          }
+        },
+
+        deleteTag: async (id: number) => {
+          try {
+            await fileExplorerService.deleteTag(id);
+            const { tags, fileTags } = get();
+            const nextTags = tags.filter((t) => t.id !== id);
+            const nextFileTags = { ...fileTags };
+            for (const [path, tList] of Object.entries(nextFileTags)) {
+              const filtered = tList.filter((t) => t.id !== id);
+              if (filtered.length === 0) {
+                delete nextFileTags[path];
+              } else {
+                nextFileTags[path] = filtered;
+              }
+            }
+            set({ tags: nextTags, fileTags: nextFileTags });
+          } catch (e) {
+            useFileExplorerStore.setState({ error: String(e) });
+          }
+        },
+
+        getFileTags: (path: string) => get().fileTags[path] ?? [],
+
+        loadAllFileTags: async () => {
+          try {
+            const results = await fileExplorerService.getAllFileTags();
+            const map: Record<string, Tag[]> = {};
+            for (const ft of results) {
+              map[ft.file_path] = map[ft.file_path] ?? [];
+              map[ft.file_path].push(ft.tag);
+            }
+            set({ fileTags: map });
+          } catch (e) {
+            useFileExplorerStore.setState({ error: String(e) });
+          }
+        },
+
+        addFileTag: async (path: string, tagId: number) => {
+          try {
+            await fileExplorerService.addFileTag(path, tagId);
+            const tag = get().tags.find((t) => t.id === tagId);
+            if (tag) {
+              const current = get().fileTags[path] ?? [];
+              if (!current.some((t) => t.id === tagId)) {
+                set({
+                  fileTags: {
+                    ...get().fileTags,
+                    [path]: [...current, tag],
+                  },
+                });
+              }
+            }
+          } catch (e) {
+            useFileExplorerStore.setState({ error: String(e) });
+          }
+        },
+
+        removeFileTag: async (path: string, tagId: number) => {
+          try {
+            await fileExplorerService.removeFileTag(path, tagId);
+            const current = get().fileTags[path] ?? [];
+            const next = current.filter((t) => t.id !== tagId);
+            if (next.length === 0) {
+              const nextFileTags = { ...get().fileTags };
+              delete nextFileTags[path];
+              set({ fileTags: nextFileTags });
+            } else {
+              set({
+                fileTags: {
+                  ...get().fileTags,
+                  [path]: next,
+                },
+              });
+            }
+          } catch (e) {
+            useFileExplorerStore.setState({ error: String(e) });
+          }
         },
 
         openContextMenu: (x: number, y: number, background = false) => set({ contextMenu: { x, y, background } }),

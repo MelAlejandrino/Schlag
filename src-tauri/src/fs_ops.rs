@@ -138,8 +138,12 @@ pub fn rename_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusql
         return Err("A file or folder with that name already exists.".into());
     }
     fs::rename(&from, &to).map_err(|e| e.to_string())?;
-    database::remove_path(&conn, Path::new(&from));
+    // Index the new path first, migrate tags onto it, then drop the old row —
+    // this order keeps file_tags' FK valid and stops the ON DELETE CASCADE
+    // from wiping the file's tags when the old row goes.
     database::index_path(&conn, Path::new(&to));
+    database::retag_path(&conn, &from, &to);
+    database::remove_path(&conn, Path::new(&from));
     content_tx.queue_remove(Path::new(&from));
     if let Ok(meta) = fs::metadata(&to) {
         content_tx.queue_index(Path::new(&to), database::modified_ms(&meta));
@@ -170,8 +174,13 @@ pub fn move_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlit
     let from_path = PathBuf::from(&from);
     let to = unique_destination(Path::new(&to));
     if fs::rename(&from_path, &to).is_ok() {
-        database::remove_path(&conn, &from_path);
+        // See rename_entry: new row → migrate tags → drop old, so the cascade
+        // doesn't take the tags with the old row.
         database::index_path(&conn, &to);
+        if let Some((f, t)) = from_path.to_str().zip(to.to_str()) {
+            database::retag_path(&conn, f, t);
+        }
+        database::remove_path(&conn, &from_path);
         content_tx.queue_remove(&from_path);
         if let Ok(meta) = fs::metadata(&to) {
             content_tx.queue_index(&to, database::modified_ms(&meta));

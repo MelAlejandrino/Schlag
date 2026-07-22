@@ -14,6 +14,8 @@ interface SelectModifiers {
   metaKey: boolean;
 }
 
+const TAG_COLORS = ["#ef4444", "#f59e0b", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
+
 export function useFileExplorer() {
   const store = useFileExplorerStore();
   // Search+ (index search) results, when active, ARE the listing — so the
@@ -322,6 +324,40 @@ export function useFileExplorer() {
     store.toggleFavorite(store.currentPath);
   }
 
+  // Path-based core; the *Selected/*Entry wrappers below just supply the path.
+  // The context-menu tag section only ever shows for a single entry, so no
+  // multi-target loop is needed.
+  async function toggleFileTag(path: string, tagId: number) {
+    const hasTag = store.getFileTags(path).some((t) => t.id === tagId);
+    if (hasTag) {
+      await store.removeFileTag(path, tagId);
+    } else {
+      await store.addFileTag(path, tagId);
+    }
+    store.refreshTabsShowing([path]);
+  }
+
+  // ponytail: new tags get a color cycled from a small fixed palette rather
+  // than a color picker — add a picker if users ask to choose colors.
+  async function createAndApplyTag(path: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || store.tags.some((t) => t.name === trimmed)) return;
+    const color = TAG_COLORS[store.tags.length % TAG_COLORS.length];
+    const tag = await store.createTag(trimmed, color);
+    await store.addFileTag(path, tag.id);
+    store.refreshTabsShowing([path]);
+  }
+
+  function toggleFileTagForSelected(tagId: number) {
+    if (selectedEntries.length !== 1) return;
+    return toggleFileTag(selectedEntries[0].path, tagId);
+  }
+
+  function createTagForSelected(name: string) {
+    if (selectedEntries.length !== 1) return;
+    return createAndApplyTag(selectedEntries[0].path, name);
+  }
+
   async function pasteIntoCurrent() {
     const clip = store.clipboard;
     if (!clip || store.currentPath === THIS_PC || insideZip) return;
@@ -428,6 +464,8 @@ export function useFileExplorer() {
     isThisPC: store.currentPath === THIS_PC,
     isSettings: store.viewState === "settings",
     isCurrentFavorite: store.favorites.includes(store.currentPath),
+    getFileTags: store.getFileTags,
+    allTags: store.tags,
     // A zip is read-only browsing (plan.md's Phase 7 sketch) — Toolbar/
     // ContextMenu use this to hide/disable write actions the same way they
     // already do for isThisPC.
@@ -458,6 +496,10 @@ export function useFileExplorer() {
     openBackgroundContextMenu,
     pasteIntoCurrent,
     toggleCurrentFavorite,
+    toggleFileTagForSelected,
+    createTagForSelected,
+    toggleFileTag,
+    createAndApplyTag,
     openTerminalToolbar,
     openTerminalContextMenu,
     getDragPaths,

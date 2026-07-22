@@ -208,6 +208,7 @@ export function FileExplorerView() {
                     onSelectRange={explorer.selectRange}
                     onDelete={explorer.deleteSelected}
                     onRename={explorer.renameSelected}
+                    getFileTags={explorer.getFileTags}
                   />
                 ) : (
                   <EntryGrid
@@ -230,6 +231,7 @@ export function FileExplorerView() {
                     onSelectRange={explorer.selectRange}
                 onDelete={explorer.deleteSelected}
                 onRename={explorer.renameSelected}
+                getFileTags={explorer.getFileTags}
               />
             )}
 
@@ -275,6 +277,14 @@ export function FileExplorerView() {
           onRefresh={explorer.refresh}
           onToggleFavorite={explorer.toggleCurrentFavorite}
           onSearchInFolder={searchInFolder}
+          allTags={explorer.allTags}
+          selectedFileTags={
+            explorer.selectedEntries.length === 1
+              ? explorer.getFileTags(explorer.selectedEntries[0].path)
+              : []
+          }
+          onToggleFileTag={explorer.toggleFileTagForSelected}
+          onCreateTag={explorer.createTagForSelected}
         />
       )}
 

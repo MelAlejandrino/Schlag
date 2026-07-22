@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { fileExplorerService } from "./services/file-explorer.service";
-import { useSearchStore } from "./store/search.store";
+import { useSearchStore, hasExplicitFilter } from "./store/search.store";
 import { useFileExplorerStore } from "./store/file-explorer.store";
 import { useDebouncedValue } from "./lib/useDebouncedValue";
 import { promoteExactMatch } from "./lib/promoteExactMatch";
@@ -46,7 +46,12 @@ export function useSearch() {
 
   return {
     ...search,
-    hasActiveQuery: search.query.trim().length > 0,
+    // A filter alone (filename mode only — content search has no filters) is
+    // enough of a "query" to show results, so "everything tagged X" works with
+    // no text typed. Content mode stays strictly query-driven.
+    hasActiveQuery:
+      search.query.trim().length > 0 ||
+      (search.mode === "filename" && hasExplicitFilter(search.filters)),
     // "billing.pdf" should outrank "old_billing.pdf" once the query is the
     // exact name typed — a pure client-side reorder over whatever page of
     // results already came back, not a second backend query.
@@ -97,7 +102,9 @@ export function useSearchTrigger() {
   useEffect(() => {
     function refetchOnFocus() {
       const current = useSearchStore.getState();
-      if (!current.isOpen || !current.query.trim()) return;
+      // runSearch/runContentSearch bail internally on a truly-empty search
+      // (empty query and no explicit filter), so no query check is needed here.
+      if (!current.isOpen) return;
       const path = useFileExplorerStore.getState().currentPath;
       if (current.mode === "content") {
         runContentSearch(current.query, withScope(current.filters, current.scopeToFolder, path, current.scopeFolder).folder, current.keywordMode);

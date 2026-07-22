@@ -6,6 +6,17 @@ export interface Entry {
   modified_ms: number;
 }
 
+export interface Tag {
+  id: number;
+  name: string;
+  color: string;
+}
+
+export interface FileTag {
+  file_path: string;
+  tag: Tag;
+}
+
 export interface QuickAccessDir {
   name: string;
   path: string;
@@ -31,8 +42,7 @@ export interface IndexStatus {
   indexed_count: number;
 }
 
-// All fields optional — omitted/undefined means unfiltered. Tags isn't here:
-// the SQLite index has no tags column yet (Phase 5).
+// All fields optional — omitted/undefined means unfiltered.
 export interface SearchFilters {
   extension?: string;
   min_size?: number;
@@ -41,6 +51,7 @@ export interface SearchFilters {
   modified_before_ms?: number;
   folder?: string;
   regex?: string;
+  tags?: string[];
 }
 
 // A Tantivy full-text content match — deliberately not just an `Entry` plus

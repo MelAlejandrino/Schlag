@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { X } from "lucide-react";
 import type { SearchFilters } from "../file-explorer.types";
 import { basename } from "../lib/path";
@@ -31,7 +32,7 @@ const COMMON_EXTENSIONS = [
 ];
 
 export function countActiveFilters(filters: SearchFilters): number {
-  return Object.values(filters).filter((v) => v !== undefined && v !== "").length;
+  return Object.values(filters).filter((v) => v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0)).length;
 }
 
 const focusRing =
@@ -145,19 +146,31 @@ interface SearchFiltersFieldsProps {
   filters: SearchFilters;
   onChange: (filters: SearchFilters) => void;
   folderSuggestions: string[];
+  tags: { id: number; name: string; color: string }[];
 }
 
 // Inline filter fields — no floating-popover positioning, unlike the
 // SearchBox-era SearchFiltersPanel this replaces. SearchModal renders this
 // directly in its own document flow as a closed-by-default disclosure, so
 // there's no anchor/clamp math to do here at all.
-export function SearchFiltersFields({ filters, onChange, folderSuggestions }: SearchFiltersFieldsProps) {
+export function SearchFiltersFields({ filters, onChange, folderSuggestions, tags }: SearchFiltersFieldsProps) {
   function set<K extends keyof SearchFilters>(key: K, value: SearchFilters[K]) {
     onChange({ ...filters, [key]: value });
   }
 
+  const selectedTags = filters.tags ?? [];
+
+  function addTag(name: string) {
+    if (!name.trim() || selectedTags.includes(name.trim())) return;
+    set("tags", [...selectedTags, name.trim()]);
+  }
+
+  function removeTag(name: string) {
+    set("tags", selectedTags.filter((t) => t !== name));
+  }
+
   return (
-    <div className="flex flex-col gap-3 px-4 py-3">
+    <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto px-4 py-3">
       <div className="flex gap-2">
         <label className="flex flex-1 flex-col gap-1">
           <span className={labelClass}>Extension</span>
@@ -182,7 +195,33 @@ export function SearchFiltersFields({ filters, onChange, folderSuggestions }: Se
         </label>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-1">
+        <span className={labelClass}>Tags</span>
+        <div className="flex flex-wrap gap-1">
+      {selectedTags.map((tag) => {
+        const found = tags.find((t) => t.name === tag);
+        return (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium"
+            style={{ backgroundColor: (found?.color ?? "#888888") + "33", color: found?.color ?? "#888888", border: `1px solid ${found?.color ?? "#888888"}55` }}
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={() => removeTag(tag)}
+              className="ml-0.5 rounded hover:bg-white/10"
+            >
+              <X size={10} strokeWidth={2} />
+            </button>
+          </span>
+        );
+      })}
+      <TagAdder tags={tags} selectedTags={selectedTags} onAdd={addTag} />
+    </div>
+  </div>
+
+  <div className="flex gap-2">
         <label className="flex flex-1 flex-col gap-1">
           <span className={labelClass}>Min size (bytes)</span>
           <input
@@ -224,6 +263,66 @@ export function SearchFiltersFields({ filters, onChange, folderSuggestions }: Se
           }
         />
       </div>
+    </div>
+  );
+}
+
+interface TagAdderProps {
+  tags: { id: number; name: string; color: string }[];
+  selectedTags: string[];
+  onAdd: (name: string) => void;
+}
+
+function TagAdder({ tags, selectedTags, onAdd }: TagAdderProps) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+
+  function commit() {
+    const name = value.trim();
+    if (!name) return;
+    onAdd(name);
+    setValue("");
+    setOpen(false);
+  }
+
+  const suggestions = tags.filter((t) => t.name.toLowerCase().includes(value.toLowerCase()) && !selectedTags.includes(t.name));
+
+  return (
+    <div className="relative">
+      <input
+        className={`${fieldClass} min-w-[120px] flex-1`}
+        placeholder="Add tag…"
+        value={value}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+      {open && suggestions.length > 0 && (
+        <div className="themed-scroll absolute left-0 right-0 top-[calc(100%+4px)] z-10 max-h-36 overflow-y-auto rounded-md border border-surface-container-highest bg-surface-container-high py-1 shadow-lg">
+          {suggestions.map((tag) => (
+            <button
+              key={tag.id}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onAdd(tag.name);
+                setValue("");
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px] text-on-surface transition-colors duration-100 hover:bg-surface-container-highest"
+            >
+              <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: tag.color }} />
+              {tag.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

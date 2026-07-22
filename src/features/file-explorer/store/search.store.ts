@@ -50,6 +50,23 @@ interface SearchState {
   clearError: () => void;
 }
 
+// An empty query normally means "no search" — except when the user has set
+// an explicit filter (tags, extension, size, date, regex), in which case
+// "everything matching this filter" is a real, wanted query. `folder` is
+// excluded deliberately: it's usually the implicit scope-to-folder toggle,
+// and an empty query + folder scope should NOT dump the whole folder tree.
+export function hasExplicitFilter(f: SearchFilters): boolean {
+  return (
+    (f.tags?.length ?? 0) > 0 ||
+    f.extension !== undefined ||
+    f.min_size !== undefined ||
+    f.max_size !== undefined ||
+    f.modified_after_ms !== undefined ||
+    f.modified_before_ms !== undefined ||
+    (f.regex !== undefined && f.regex !== "")
+  );
+}
+
 // A slower earlier request resolving after a newer one would otherwise
 // overwrite fresher results with stale ones — this tags each call and only
 // commits state if it's still the most recent by the time it resolves.
@@ -83,7 +100,7 @@ export const useSearchStore = create<SearchState>()((set) => ({
 
   runSearch: async (query, filters, keywordMode) => {
     const requestId = ++latestRequestId;
-    if (!query.trim()) {
+    if (!query.trim() && !hasExplicitFilter(filters)) {
       if (requestId === latestRequestId) set({ results: [], isSearching: false, error: null });
       return;
     }

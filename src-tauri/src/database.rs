@@ -31,6 +31,10 @@ pub fn open(db_path: &Path) -> rusqlite::Result<Connection> {
     // WAL: better concurrent read/write behavior and crash resilience than
     // the default rollback journal, at essentially no cost for this workload.
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    // Off by default in SQLite; needed for file_tags' ON DELETE CASCADE to
+    // actually fire when a file leaves the index (safe here — upsert uses
+    // ON CONFLICT DO UPDATE, so re-indexing never deletes+recreates a row).
+    conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY,
@@ -91,6 +95,23 @@ pub fn open(db_path: &Path) -> rusqlite::Result<Connection> {
             path TEXT PRIMARY KEY,
             indexed_mtime INTEGER NOT NULL
         );",
+    )?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            color TEXT NOT NULL DEFAULT '#888888'
+        );
+        CREATE TABLE IF NOT EXISTS file_tags (
+            file_path TEXT NOT NULL,
+            tag_id INTEGER NOT NULL,
+            PRIMARY KEY (file_path, tag_id),
+            FOREIGN KEY (file_path) REFERENCES files(path) ON DELETE CASCADE,
+            FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_file_tags_file_path ON file_tags(file_path);
+        CREATE INDEX IF NOT EXISTS idx_file_tags_tag_id ON file_tags(tag_id);",
     )?;
 
     Ok(conn)
@@ -258,6 +279,26 @@ pub fn remove_path(conn: &Mutex<Connection>, path: &Path) {
     }
 }
 
+// Re-point a file's tag associations after a rename/move so tags follow the
+// file. Must run AFTER the new files row exists and BEFORE the old one is
+// removed (foreign_keys=ON means file_tags.file_path must always reference a
+// live files row). OR IGNORE drops a would-be duplicate if `to` already
+// carries that tag.
+// ponytail: migrates only the exact path — tags on files *inside* a renamed/
+// moved directory aren't carried (their new files rows don't exist yet, so the
+// FK would reject the update, and the cross-volume copy+delete fallback is
+// likewise not covered). Add a subtree files+tags path-rewrite if that matters.
+pub fn retag_path(conn: &Mutex<Connection>, from: &str, to: &str) {
+    if let Ok(c) = conn.lock() {
+        if let Err(e) = c.execute(
+            "UPDATE OR IGNORE file_tags SET file_path = ?1 WHERE file_path = ?2",
+            params![to, from],
+        ) {
+            tracing::warn!("failed to migrate tags {from} -> {to}: {e}");
+        }
+    }
+}
+
 // Test-only: production code reports progress via IndexStatus's in-memory
 // atomics (cheap to poll), not a live SQLite COUNT(*).
 #[cfg(test)]
@@ -304,6 +345,37 @@ mod tests {
             .query_row("SELECT size FROM files WHERE path = ?1", params![r.path], |row| row.get(0))
             .unwrap();
         assert_eq!(stored_size, 100);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn retag_path_moves_tags_to_the_new_path_and_survives_the_cascade() {
+        let (path, conn) = temp_db("schlag_test_db_retag.sqlite");
+
+        // A tagged file at the old path.
+        upsert_entry(&conn, &row("C:\\a\\old.txt")).unwrap();
+        conn.execute("INSERT INTO tags (name, color) VALUES ('work', '#111')", []).unwrap();
+        conn.execute("INSERT INTO file_tags (file_path, tag_id) VALUES ('C:\\a\\old.txt', 1)", []).unwrap();
+
+        // Rename flow: new row first, migrate tags, then drop the old row.
+        upsert_entry(&conn, &row("C:\\a\\new.txt")).unwrap();
+        let m = std::sync::Mutex::new(conn);
+        retag_path(&m, "C:\\a\\old.txt", "C:\\a\\new.txt");
+        {
+            let c = m.lock().unwrap();
+            delete_by_path(&c, "C:\\a\\old.txt").unwrap();
+        }
+
+        let c = m.lock().unwrap();
+        let at_new: i64 = c
+            .query_row("SELECT COUNT(*) FROM file_tags WHERE file_path = 'C:\\a\\new.txt'", [], |r| r.get(0))
+            .unwrap();
+        let at_old: i64 = c
+            .query_row("SELECT COUNT(*) FROM file_tags WHERE file_path = 'C:\\a\\old.txt'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(at_new, 1, "tag should follow the file to its new path");
+        assert_eq!(at_old, 0, "no tag rows should linger at the old path");
 
         let _ = std::fs::remove_file(&path);
     }
