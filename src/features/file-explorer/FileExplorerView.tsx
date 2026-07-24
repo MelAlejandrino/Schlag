@@ -17,6 +17,7 @@ import { ConfirmModal } from "./components/ConfirmModal";
 import { SettingsPage } from "./components/SettingsPage";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { StatusBar } from "./components/StatusBar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { EditActionsBar } from "./components/EditActionsBar";
 import { ListingActions } from "./components/ListingActions";
 import { WindowControls } from "./components/WindowControls";
@@ -180,6 +181,8 @@ export function FileExplorerView() {
                 </button>
               </div>
             )}
+
+            <UpdateBanner />
 
             {explorer.isSettings ? (
               <SettingsPage onBack={explorer.closeSettings} />

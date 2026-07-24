@@ -2,6 +2,12 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.8] - 2026-07-24
+
+### Added
+
+- **Update banner on app open:** Schlag now checks for updates on startup and shows a floating banner when a newer version is available, with one-click download and install.
+
 ## [1.0.7] - 2026-07-24
 
 ### Fixed
