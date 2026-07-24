@@ -305,7 +305,7 @@ pub async fn copy_entry(
     };
     let ctx = CopyCtx { emit: &emit, cancel: &flag };
     let to = copy_entry_inner(from, Path::new(&to), Some(&ctx))?;
-    index_tree(&conn, &content_tx, &to);
+    index_tree(&conn, &content_tx, &to, &emit);
     // Return the actual destination (unique_destination may have numbered it)
     // so the frontend can revert exactly this file on cancel, not guess.
     Ok(to.to_string_lossy().into_owned())
@@ -358,7 +358,7 @@ pub async fn move_entry(
         fs::remove_file(&from_path).map_err(|e| e.to_string())?;
     }
     database::remove_path(&conn, &from_path);
-    index_tree(&conn, &content_tx, &to);
+    index_tree(&conn, &content_tx, &to, &emit);
     Ok(to.to_string_lossy().into_owned())
 }
 
@@ -406,18 +406,64 @@ fn shell_execute_verb(_path: &str, _verb: &str) -> Result<(), String> {
 // the SQLite search database and queues content events. Called after
 // move/copy operations so the search index reflects the new files
 // immediately, without waiting for the notify watcher.
-fn index_tree(conn: &Mutex<rusqlite::Connection>, content_tx: &ContentEventSender, path: &Path) {
-    database::index_path(conn, path);
-    if let Ok(meta) = fs::metadata(path) {
-        if meta.is_dir() {
-            if let Ok(entries) = fs::read_dir(path) {
-                for entry in entries.filter_map(Result::ok) {
-                    index_tree(conn, content_tx, &entry.path());
-                }
+//
+// Batches the SQLite upserts (chunked transactions, one lock per chunk)
+// instead of one lock + implicit transaction per file — a big folder's
+// post-copy indexing was thousands of individually locked upserts, the exact
+// order-of-magnitude-slower pattern upsert_batch exists to avoid, and it was
+// the real source of a long, feedback-less "Finishing…" phase. `emit` streams
+// a running file count so that phase shows live progress.
+// ponytail: collects every row in memory before flushing (~tens of MB for a
+// 500k-file paste); chunk-flush incrementally if that ever bites.
+const INDEX_FLUSH_CHUNK: usize = 10_000;
+
+fn index_tree(
+    conn: &Mutex<rusqlite::Connection>,
+    content_tx: &ContentEventSender,
+    path: &Path,
+    emit: &dyn Fn(CopyProgress),
+) {
+    let mut rows = Vec::new();
+    let mut count: u64 = 0;
+    let mut last_emit = Instant::now();
+    collect_index_rows(content_tx, path, &mut rows, &mut count, &mut last_emit, emit);
+
+    for chunk in rows.chunks(INDEX_FLUSH_CHUNK) {
+        if let Ok(mut c) = conn.lock() {
+            if let Err(e) = database::upsert_batch(&mut c, chunk) {
+                tracing::warn!("failed to index copied tree: {e}");
             }
-        } else {
-            content_tx.queue_index(path, database::modified_ms(&meta));
         }
+    }
+    emit(CopyProgress { total: 0, written: 0, indexed: Some(count) });
+}
+
+fn collect_index_rows(
+    content_tx: &ContentEventSender,
+    path: &Path,
+    rows: &mut Vec<database::FileRow>,
+    count: &mut u64,
+    last_emit: &mut Instant,
+    emit: &dyn Fn(CopyProgress),
+) {
+    let meta = match fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    rows.push(database::row_from_meta(path, &meta));
+    *count += 1;
+    if last_emit.elapsed() >= PROGRESS_INTERVAL {
+        emit(CopyProgress { total: 0, written: 0, indexed: Some(*count) });
+        *last_emit = Instant::now();
+    }
+    if meta.is_dir() {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.filter_map(Result::ok) {
+                collect_index_rows(content_tx, &entry.path(), rows, count, last_emit, emit);
+            }
+        }
+    } else {
+        content_tx.queue_index(path, database::modified_ms(&meta));
     }
 }
 
@@ -466,6 +512,12 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 pub struct CopyProgress {
     pub total: u64,
     pub written: u64,
+    // Set during the post-copy indexing phase ("Finishing…") to a running
+    // count of files indexed. Absent on byte-progress messages. Gives that
+    // phase a live number so a big folder's slow-but-working index update is
+    // distinguishable from a genuine hang.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indexed: Option<u64>,
 }
 
 fn copy_with_progress(
@@ -498,7 +550,7 @@ fn copy_with_progress(
 
         // Time-throttled so a fast disk doesn't flood the event channel.
         if last_emit.elapsed() >= PROGRESS_INTERVAL {
-            (ctx.emit)(CopyProgress { total, written });
+            (ctx.emit)(CopyProgress { total, written, indexed: None });
             last_emit = Instant::now();
         }
     }
@@ -506,7 +558,7 @@ fn copy_with_progress(
     dst.flush()?;
     // Always send a final 100% update so the bar completes even if the whole
     // copy finished inside one throttle window.
-    (ctx.emit)(CopyProgress { total, written });
+    (ctx.emit)(CopyProgress { total, written, indexed: None });
     Ok(written)
 }
 

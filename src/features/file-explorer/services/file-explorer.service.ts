@@ -15,7 +15,7 @@ import type {
 
 // One progress update for a single file being copied, streamed over the
 // per-invocation channel passed to copy_entry/move_entry.
-export type CopyProgressMsg = { total: number; written: number };
+export type CopyProgressMsg = { total: number; written: number; indexed?: number };
 
 export const fileExplorerService = {
   quickAccessDirs: () => invoke<QuickAccessDir[]>("quick_access_dirs"),

@@ -330,18 +330,21 @@ export function FileExplorerView() {
         />
       )}
 
-      <CopyProgressStack />
-
-
-      <IndexStatusBadge />
+      {/* Both dock bottom-right. Progress stack holds the corner; the index
+          badge sits to its left, both anchored to the bottom (side by side). */}
+      <div className="fixed bottom-4 right-4 z-[80] flex flex-row items-end gap-2">
+        <IndexStatusBadge />
+        <CopyProgressStack />
+      </div>
 
       <WindowResizeHandles />
     </div>
   );
 }
 
-// Transfer toasts, docked bottom-right (download-manager convention, and out
-// of the way of the centered listing and the index badge now at bottom-left).
+// Transfer toasts, docked bottom-right (download-manager convention). Rendered
+// as a sibling of the index badge in a shared bottom-right row: the stack holds
+// the corner, the badge sits to its left.
 // A second paste started while the first still runs gets its own bar. The
 // stack is height-capped and scrolls \u2014 with many operations it can never grow
 // past the top of the window (the bug the old unbounded upward stack had).
@@ -364,7 +367,7 @@ function CopyProgressStack() {
   const goTo = (dir: string) => void useFileExplorerStore.getState().navigate(dir);
   const active = list.filter((o) => !o.done && !o.reverting).length;
   return (
-    <div className="fixed bottom-4 right-4 z-[80] flex max-h-[calc(100vh-6rem)] w-80 flex-col gap-2 overflow-y-auto">
+    <div className="flex max-h-[calc(100vh-6rem)] w-80 flex-col gap-2 overflow-y-auto">
       {multi && (
         <button
           type="button"
@@ -479,8 +482,9 @@ function CopyProgressBar({
           />
         </div>
         {finishing ? (
-          <span className="flex shrink-0 items-center gap-1 text-[11px] text-on-surface-variant">
-            <Loader2 className="h-3 w-3 animate-spin" /> Finishing…
+          <span className="flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-on-surface-variant">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {progress.indexed != null ? `Indexing ${progress.indexed.toLocaleString()}…` : "Finishing…"}
           </span>
         ) : (
           <span className="shrink-0 text-[11px] tabular-nums text-on-surface-variant">{bytes}</span>

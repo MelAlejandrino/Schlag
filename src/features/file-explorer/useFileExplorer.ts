@@ -52,7 +52,10 @@ async function runCopyBatch(
       // Fresh channel per item; its messages update this batch's bar. Scoped
       // to the call, so no global event to route and no cross-batch bleed.
       const channel = new Channel<CopyProgressMsg>();
-      channel.onmessage = (m) => useCopyProgressStore.getState().applyBytes(id, m.total, m.written);
+      channel.onmessage = (m) =>
+        m.indexed != null
+          ? useCopyProgressStore.getState().applyIndexing(id, m.indexed)
+          : useCopyProgressStore.getState().applyBytes(id, m.total, m.written);
       const dest = await op(id, p, joinPath(destDir, basename(p)), channel);
       done.push({ src: p, dest });
     }

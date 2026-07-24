@@ -13,6 +13,7 @@ export interface CopyOp {
   op: ClipboardOp; // "copy" | "cut" — drives the "Copying"/"Moving" label
   total: number; // bytes of the current file (0 until the first event)
   written: number; // bytes copied so far of the current file
+  indexed?: number; // files indexed so far in the post-copy "Finishing…" phase
   reverting?: boolean; // cancelled — undoing the already-pasted items
   done?: boolean; // finished — shows a "Completed" check before auto-dismiss
 }
@@ -31,6 +32,8 @@ interface CopyProgressState {
   // Merges byte counts from a progress event; a no-op if the op was already
   // removed (a late event after the batch finished/was cancelled).
   applyBytes: (id: string, total: number, written: number) => void;
+  // Merges the running file count from the post-copy indexing phase.
+  applyIndexing: (id: string, indexed: number) => void;
   // Flips a bar into its "Reverting…" state while a cancelled batch undoes.
   markReverting: (id: string) => void;
   // Flips a bar into its "Completed" state (shown briefly before removal).
@@ -42,7 +45,11 @@ export const useCopyProgressStore = create<CopyProgressState>((set) => ({
   ops: {},
   setOp: (op) => set((s) => ({ ops: { ...s.ops, [op.id]: op } })),
   applyBytes: (id, total, written) =>
-    set((s) => (s.ops[id] ? { ops: { ...s.ops, [id]: { ...s.ops[id], total, written } } } : s)),
+    // Clear any lingering index count from a previous item so the next item's
+    // byte progress doesn't briefly show a stale "N items".
+    set((s) => (s.ops[id] ? { ops: { ...s.ops, [id]: { ...s.ops[id], total, written, indexed: undefined } } } : s)),
+  applyIndexing: (id, indexed) =>
+    set((s) => (s.ops[id] ? { ops: { ...s.ops, [id]: { ...s.ops[id], indexed } } } : s)),
   markReverting: (id) =>
     set((s) => (s.ops[id] ? { ops: { ...s.ops, [id]: { ...s.ops[id], reverting: true } } } : s)),
   markDone: (id) =>

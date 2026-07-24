@@ -253,15 +253,21 @@ pub fn delete_batch(conn: &mut Connection, paths: &[String]) -> rusqlite::Result
 // callers should skip silently, same as the indexer's own row_from_path.
 fn row_from_path(path: &Path) -> Option<FileRow> {
     let meta = std::fs::metadata(path).ok()?;
-    let modified_ms = modified_ms(&meta);
-    Some(FileRow {
+    Some(row_from_meta(path, &meta))
+}
+
+// Same as row_from_path but reuses an already-stat'd Metadata, so a caller
+// that already stat'd the path (e.g. fs_ops::index_tree deciding whether to
+// recurse) doesn't stat it twice.
+pub fn row_from_meta(path: &Path, meta: &std::fs::Metadata) -> FileRow {
+    FileRow {
         path: path.to_string_lossy().into_owned(),
         name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         extension: path.extension().map(|e| e.to_string_lossy().into_owned()),
         is_dir: meta.is_dir(),
         size: meta.len(),
-        modified_ms,
-    })
+        modified_ms: modified_ms(meta),
+    }
 }
 
 // Immediate SQLite index upsert for a path — called by fs_ops after a
