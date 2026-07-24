@@ -2,6 +2,16 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.1.1] - 2026-07-24
+
+### Fixed
+
+- **"Finishing…" no longer looks stuck on large folders:** After a copy or paste, Schlag updates its search index for the new files. For a big folder this took a while with no feedback, so the transfer looked frozen. It's now much faster and shows a live "Indexing N…" count that climbs as it works, so you can tell it's progressing rather than hung.
+
+### Changed
+
+- **Indexing badge moved out of the way:** The background "Indexing…" badge no longer covers the sidebar's Settings button. It now sits in the bottom-right next to the transfer progress toasts (which keep the corner) when both are showing.
+
 ## [1.1.0] - 2026-07-24
 
 ### Added
