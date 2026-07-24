@@ -2,6 +2,14 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.7] - 2026-07-24
+
+### Fixed
+
+- **Deleting large or deeply-nested files no longer freezes the app:** Deletes now run off the UI thread, so recycling a big file or folder no longer locks up the window.
+- **No more confusing native "permanently delete?" popup:** When Windows can't move an item to the Recycle Bin (its contents' names are too long, or it's too big), Schlag now shows its own in-app confirmation to delete permanently instead of the slow native Windows dialog.
+- **Delete confirmation can't be dismissed accidentally:** The delete confirmation no longer closes on a click outside it, and ignores Escape while a delete is already in progress.
+
 ## [1.0.6] - 2026-07-22
 
 ### Fixed
