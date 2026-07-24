@@ -154,11 +154,80 @@ pub fn rename_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusql
 // ponytail: trash crate sends to the OS recycle bin instead of a raw
 // fs::remove_*, so "Delete" never destroys data outright.
 #[tauri::command]
-pub fn delete_entry(path: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
-    trash::delete(&path).map_err(|e| e.to_string())?;
-    database::remove_path(&conn, Path::new(&path));
-    content_tx.queue_remove(Path::new(&path));
+// ponytail: async so Tauri runs it off the main thread — a sync command
+// blocks the UI event loop, and recycling a large file/folder is slow enough
+// to freeze the app. No .await in the body, so the future stays Send and no
+// MutexGuard is held across a suspend point.
+//
+// Returns true if the entry went to the Recycle Bin, false if Windows can't
+// recycle it (paths too long / too big) — the frontend then offers permanent
+// deletion via delete_entry_permanent. We call IFileOperation ourselves with
+// FOFX_RECYCLEONDELETE instead of the `trash` crate, because trash hardcodes
+// FOF_WANTNUKEWARNING, which makes Windows pop its own native "permanently
+// delete?" dialog for un-recyclable items instead of failing cleanly.
+pub async fn delete_entry(path: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<bool, String> {
+    let recycled = recycle_to_bin(&path)?;
+    if recycled {
+        database::remove_path(&conn, Path::new(&path));
+        content_tx.queue_remove(Path::new(&path));
+    }
+    Ok(recycled)
+}
+
+// Permanent delete, used only after delete_entry reports the entry couldn't be
+// recycled and the user confirms in-app. ponytail: std remove_dir_all is
+// handle-based on Windows since 1.64, so it isn't subject to MAX_PATH — no
+// \\?\ prefixing needed for the deep/long-named trees that fail to recycle.
+#[tauri::command]
+pub async fn delete_entry_permanent(path: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
+    let p = Path::new(&path);
+    let res = if p.is_dir() { fs::remove_dir_all(p) } else { fs::remove_file(p) };
+    res.map_err(|e| e.to_string())?;
+    database::remove_path(&conn, p);
+    content_tx.queue_remove(p);
     Ok(())
+}
+
+// Ok(true) = recycled, Ok(false) = couldn't recycle (offer permanent delete),
+// Err = the path/COM setup was invalid. Any failure during the actual delete
+// (a nested name too long for the bin) aborts early and reads as Ok(false).
+#[cfg(windows)]
+fn recycle_to_bin(path: &str) -> Result<bool, String> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName};
+    use windows::core::PCWSTR;
+
+    const FOF_SILENT: u32 = 0x0004;
+    const FOF_NOCONFIRMATION: u32 = 0x0010;
+    const FOF_ALLOWUNDO: u32 = 0x0040;
+    const FOF_NOCONFIRMMKDIR: u32 = 0x0200;
+    const FOF_NOERRORUI: u32 = 0x0400;
+    const FOFX_RECYCLEONDELETE: u32 = 0x0008_0000; // fail rather than nuke if it can't be recycled
+    const FOFX_EARLYFAILURE: u32 = 0x0010_0000;
+    const FLAGS: u32 =
+        FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR | FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOFX_EARLYFAILURE;
+
+    let path_w: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        // Idempotent per thread; leak the init like the `trash` crate does.
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
+        let pfo: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
+        pfo.SetOperationFlags(windows::Win32::UI::Shell::FILEOPERATION_FLAGS(FLAGS)).map_err(|e| e.to_string())?;
+
+        let shi: IShellItem = SHCreateItemFromParsingName(PCWSTR(path_w.as_ptr()), None).map_err(|e| e.to_string())?;
+        pfo.DeleteItem(&shi, None).map_err(|e| e.to_string())?;
+
+        let performed = pfo.PerformOperations();
+        let aborted = pfo.GetAnyOperationsAborted().map(|b| b.as_bool()).unwrap_or(true);
+        Ok(performed.is_ok() && !aborted)
+    }
+}
+
+#[cfg(not(windows))]
+fn recycle_to_bin(_path: &str) -> Result<bool, String> {
+    Err("not supported on this platform".to_string())
 }
 
 #[tauri::command]

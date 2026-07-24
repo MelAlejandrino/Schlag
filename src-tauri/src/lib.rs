@@ -76,6 +76,7 @@ pub fn run() {
             fs_ops::create_file,
             fs_ops::rename_entry,
             fs_ops::delete_entry,
+            fs_ops::delete_entry_permanent,
             fs_ops::copy_entry,
             fs_ops::move_entry,
             fs_ops::open_with_dialog,

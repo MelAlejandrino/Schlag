@@ -453,16 +453,39 @@ export function useFileExplorer() {
 
   async function confirmDelete() {
     try {
-      await Promise.all(deleteEntries.map((e) => fileExplorerService.deleteEntry(e.path)));
+      // deleteEntry returns false for entries Windows couldn't recycle (paths
+      // too long / too big) — collect those and offer a permanent delete.
+      const results = await Promise.all(
+        deleteEntries.map((e) => fileExplorerService.deleteEntry(e.path).then((recycled) => ({ e, recycled }))),
+      );
       store.clearSelection();
       // Deleting a search result targets whatever folder it actually lives
       // in — refreshTabsShowing catches any other tab open on that folder,
       // not just the active one.
       store.refreshTabsShowing([...new Set(deleteEntries.map((e) => dirname(e.path)))]);
+      const stuck = results.filter((r) => !r.recycled).map((r) => r.e);
+      if (stuck.length) store.openPermanentDelete(stuck);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
     } finally {
       store.closeDeleteConfirm();
+    }
+  }
+
+  const permanentDeleteEntries = store.permanentDeleteTarget ?? [];
+  const permanentDeleteMessage =
+    permanentDeleteEntries.length === 1
+      ? `"${permanentDeleteEntries[0].name}" can't be moved to the Recycle Bin (its contents' names are too long). Delete it permanently? This can't be undone.`
+      : `${permanentDeleteEntries.length} items can't be moved to the Recycle Bin. Delete them permanently? This can't be undone.`;
+
+  async function confirmPermanentDelete() {
+    try {
+      await Promise.all(permanentDeleteEntries.map((e) => fileExplorerService.deleteEntryPermanent(e.path)));
+      store.refreshTabsShowing([...new Set(permanentDeleteEntries.map((e) => dirname(e.path)))]);
+    } catch (e) {
+      useFileExplorerStore.setState({ error: String(e) });
+    } finally {
+      store.closePermanentDelete();
     }
   }
 
@@ -520,6 +543,8 @@ export function useFileExplorer() {
     renameSelected,
     deleteSelected,
     confirmDelete,
+    permanentDeleteMessage,
+    confirmPermanentDelete,
     copySelected,
     cutSelected,
     // Explicit-target variants for callers outside the current directory

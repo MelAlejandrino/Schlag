@@ -312,6 +312,16 @@ export function FileExplorerView() {
         />
       )}
 
+      {explorer.permanentDeleteTarget && (
+        <ConfirmModal
+          title="Delete permanently"
+          message={explorer.permanentDeleteMessage}
+          confirmLabel="Delete permanently"
+          onConfirm={explorer.confirmPermanentDelete}
+          onCancel={explorer.closePermanentDelete}
+        />
+      )}
+
       <IndexStatusBadge />
 
       <WindowResizeHandles />

@@ -1,6 +1,6 @@
 [package]
 name = "schlag"
-version = "1.0.6"
+version = "1.0.7"
 description = "A modern, high-performance desktop file explorer"
 edition = "2021"
 
@@ -21,7 +21,6 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-trash = "3"
 dirs = "6"
 rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 walkdir = "2"
@@ -40,5 +39,5 @@ tauri-plugin-process = "2.3.1"
 portable-pty = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_UI_Shell", "Win32_Foundation", "Win32_System_Registry"] }
+windows = { version = "0.61", features = ["Win32_UI_Shell", "Win32_Foundation", "Win32_System_Registry", "Win32_System_Com"] }
 

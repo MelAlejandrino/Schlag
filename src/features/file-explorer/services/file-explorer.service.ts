@@ -30,7 +30,10 @@ export const fileExplorerService = {
   createDir: (path: string) => invoke<void>("create_dir", { path }),
   createFile: (path: string) => invoke<void>("create_file", { path }),
   renameEntry: (from: string, to: string) => invoke<void>("rename_entry", { from, to }),
-  deleteEntry: (path: string) => invoke<void>("delete_entry", { path }),
+  // Returns true if recycled, false if Windows couldn't recycle it (too long /
+  // too big) — caller then offers deleteEntryPermanent.
+  deleteEntry: (path: string) => invoke<boolean>("delete_entry", { path }),
+  deleteEntryPermanent: (path: string) => invoke<void>("delete_entry_permanent", { path }),
   copyEntry: (from: string, to: string) => invoke<void>("copy_entry", { from, to }),
   moveEntry: (from: string, to: string) => invoke<void>("move_entry", { from, to }),
   openWithDialog: (path: string) => invoke<void>("open_with_dialog", { path }),

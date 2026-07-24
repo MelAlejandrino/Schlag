@@ -109,6 +109,9 @@ interface FileExplorerState {
   clipboard: ClipboardState | null;
   deleteConfirmOpen: boolean;
   deleteTarget: Entry[] | null;
+  // Entries Windows refused to recycle (paths too long / too big) — set when
+  // the normal delete falls back, drives a second "delete permanently?" modal.
+  permanentDeleteTarget: Entry[] | null;
   // A one-shot "scroll this path into view once the listing renders" signal,
   // set by openFileLocation (a search result's folder can have thousands of
   // entries, and selecting the target isn't enough — it's off-screen). The
@@ -191,6 +194,8 @@ interface FileExplorerState {
   clearClipboard: () => void;
   openDeleteConfirm: (target?: Entry[]) => void;
   closeDeleteConfirm: () => void;
+  openPermanentDelete: (target: Entry[]) => void;
+  closePermanentDelete: () => void;
   selectOnly: (path: string) => void;
   selectAll: (paths: string[]) => void;
   toggleSelect: (path: string) => void;
@@ -275,6 +280,7 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         clipboard: null,
         deleteConfirmOpen: false,
         deleteTarget: null,
+        permanentDeleteTarget: null,
         revealPath: null,
         searchResults: null,
         filterQuery: "",
@@ -723,6 +729,8 @@ export const useFileExplorerStore = create<FileExplorerState>()(
 
         openDeleteConfirm: (target?: Entry[]) => set({ deleteConfirmOpen: true, deleteTarget: target ?? null }),
         closeDeleteConfirm: () => set({ deleteConfirmOpen: false, deleteTarget: null }),
+        openPermanentDelete: (target: Entry[]) => set({ permanentDeleteTarget: target }),
+        closePermanentDelete: () => set({ permanentDeleteTarget: null }),
 
         selectOnly: (path: string) => applyTabPatch(get().activeTabId, { selectedPaths: [path], selectionAnchor: path }),
 

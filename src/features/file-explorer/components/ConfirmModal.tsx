@@ -28,20 +28,18 @@ export function ConfirmModal({ title, message, confirmLabel, onConfirm, onCancel
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === "Escape") onCancel();
+    // Only Escape (deliberate) dismisses, and not once a delete is in flight —
+    // a backdrop click never does, so an accidental outside click can't cancel.
+    if (e.key === "Escape" && !submitting) onCancel();
   }
 
   return (
-    <div
-      className="animate-backdrop-in fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
-      onClick={onCancel}
-    >
+    <div className="animate-backdrop-in fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-[2px]">
       <div
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"
         className="animate-dialog-in flex w-80 flex-col gap-4 rounded-lg border border-surface-container-highest bg-surface-container-high p-4 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         <div className="flex items-center gap-2">
