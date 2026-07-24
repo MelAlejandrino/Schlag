@@ -80,14 +80,24 @@ and `sync_wrapper` are legitimately `1.0.2` in the wild and were never `1.0.1`.
    git tag -a vx.y.z -m "vx.y.z"
    git push origin vx.y.z
    ```
-5. **Do not create or publish a release manually.** Wait for the CI run
-   triggered by the tag to finish.
-6. Verify the draft release has all 7 assets (msi, nsis, `.sig` files,
-   `latest.json`). If assets are missing, the run failed — check the logs,
-   fix, and re-push the tag (you may need to delete and recreate it).
-7. Publish the draft from the GitHub UI (or `gh release edit vx.y.z
-   --draft=false`) only after confirming the build succeeded and assets are
-   present.
+5. **Do not create or publish a release manually.** Pushing the tag is the
+   last automated step — the CI build takes ~10+ minutes and produces a draft
+   on its own.
+6. **Do not watch, poll, or otherwise wait on the CI run, and do not verify
+   its assets.** No `gh run watch`, no `gh run list` polling loop, no
+   `gh release view` asset checks — that just burns time/tokens sitting on a
+   long build. Reviewing the run and the draft is a human step, below.
+
+## After the tag is pushed (human step — not automated)
+
+A human reviews the CI run and the draft, then publishes:
+
+- Confirm the run succeeded and the draft release has all 7 assets (msi, nsis,
+  `.sig` files, `latest.json`). If assets are missing, the run failed — check
+  the logs, fix, and re-push the tag (you may need to delete and recreate it).
+- Publish the draft from the GitHub UI (or `gh release edit vx.y.z
+  --draft=false`) only after confirming the build succeeded and assets are
+  present.
 
 ## If a tag needs to move (after a fix)
 
