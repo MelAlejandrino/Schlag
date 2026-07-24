@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import type {
@@ -12,6 +12,10 @@ import type {
   StorageInfo,
   Tag,
 } from "../file-explorer.types";
+
+// One progress update for a single file being copied, streamed over the
+// per-invocation channel passed to copy_entry/move_entry.
+export type CopyProgressMsg = { total: number; written: number };
 
 export const fileExplorerService = {
   quickAccessDirs: () => invoke<QuickAccessDir[]>("quick_access_dirs"),
@@ -34,8 +38,17 @@ export const fileExplorerService = {
   // too big) — caller then offers deleteEntryPermanent.
   deleteEntry: (path: string) => invoke<boolean>("delete_entry", { path }),
   deleteEntryPermanent: (path: string) => invoke<void>("delete_entry_permanent", { path }),
-  copyEntry: (from: string, to: string) => invoke<void>("copy_entry", { from, to }),
-  moveEntry: (from: string, to: string) => invoke<void>("move_entry", { from, to }),
+  // Both return the actual destination path (unique_destination may have
+  // numbered it) so a cancelled batch can revert exactly the files it created.
+  // Progress streams back on the per-call `onProgress` channel (see
+  // CopyProgressMsg below) — scoped to this invocation, so no global event
+  // and no cross-batch mix-ups.
+  copyEntry: (opId: string, from: string, to: string, onProgress: Channel<CopyProgressMsg>) =>
+    invoke<string>("copy_entry", { opId, from, to, onProgress }),
+  moveEntry: (opId: string, from: string, to: string, onProgress: Channel<CopyProgressMsg>) =>
+    invoke<string>("move_entry", { opId, from, to, onProgress }),
+  cancelCopy: (opId: string) => invoke<void>("cancel_copy", { opId }),
+  endCopy: (opId: string) => invoke<void>("end_copy", { opId }),
   openWithDialog: (path: string) => invoke<void>("open_with_dialog", { path }),
   showProperties: (path: string) => invoke<void>("show_properties", { path }),
   indexStatus: () => invoke<IndexStatus>("index_status"),

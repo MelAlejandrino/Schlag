@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { fileExplorerService } from "./services/file-explorer.service";
+import { Channel } from "@tauri-apps/api/core";
+import { fileExplorerService, type CopyProgressMsg } from "./services/file-explorer.service";
 import { useFileExplorerStore } from "./store/file-explorer.store";
+import { useCopyProgressStore } from "./store/copy-progress.store";
 import { basename, dirname, joinPath } from "./lib/path";
 import { getPromptConfig } from "./lib/promptConfig";
 import { filterEntries } from "./lib/filterEntries";
 import type { SortKey } from "./lib/sortEntries";
 import { isInsideZip, zipRootPath, zipSplit } from "./lib/zipPath";
-import { THIS_PC, type Entry } from "./file-explorer.types";
+import { THIS_PC, type Entry, type ClipboardOp } from "./file-explorer.types";
 
 interface SelectModifiers {
   shiftKey: boolean;
@@ -15,6 +17,86 @@ interface SelectModifiers {
 }
 
 const TAG_COLORS = ["#ef4444", "#f59e0b", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
+
+// Must match fs_ops.rs's COPY_CANCELLED sentinel — a cancelled copy returns
+// this as its error text so the batch runner can tell it apart from a real
+// failure and not surface an error banner.
+const COPY_CANCELLED = "__copy_cancelled__";
+
+// How long a finished bar shows its "Completed" check before auto-dismissing.
+const DONE_LINGER_MS = 1500;
+
+// Runs a copy/move batch one item at a time under a single op_id. Sequential
+// within the batch (so this batch's per-file events don't interleave), but
+// two batches can run concurrently — each has its own op_id, its own progress
+// bar (in useCopyProgressStore, keyed by id), and its own cancel flag. Sets
+// the per-item context before each op, swallows the cancel sentinel (returns
+// false), lets real errors propagate, and always cleans up its progress
+// entry and the backend cancel flag.
+async function runCopyBatch(
+  items: string[],
+  op: (opId: string, from: string, to: string, onProgress: Channel<CopyProgressMsg>) => Promise<string>,
+  opKind: ClipboardOp,
+  destDir: string,
+): Promise<boolean> {
+  const id = crypto.randomUUID();
+  const progress = useCopyProgressStore.getState();
+  // Items fully finished this batch, so a cancel can undo exactly them (the
+  // in-flight item never lands here — its op throws before the push, and the
+  // backend already cleaned up its partial destination).
+  const done: { src: string; dest: string }[] = [];
+  try {
+    for (let i = 0; i < items.length; i++) {
+      const p = items[i];
+      progress.setOp({ id, index: i, count: items.length, name: basename(p), destDir, op: opKind, total: 0, written: 0 });
+      // Fresh channel per item; its messages update this batch's bar. Scoped
+      // to the call, so no global event to route and no cross-batch bleed.
+      const channel = new Channel<CopyProgressMsg>();
+      channel.onmessage = (m) => useCopyProgressStore.getState().applyBytes(id, m.total, m.written);
+      const dest = await op(id, p, joinPath(destDir, basename(p)), channel);
+      done.push({ src: p, dest });
+    }
+    // Finished — show a "Completed" check for a moment so it's obvious the
+    // transfer is done (and not stuck at 100%), then auto-dismiss.
+    progress.markDone(id);
+    window.setTimeout(() => useCopyProgressStore.getState().remove(id), DONE_LINGER_MS);
+    return true;
+  } catch (e) {
+    if (String(e).includes(COPY_CANCELLED)) {
+      progress.markReverting(id);
+      await revertBatch(done, opKind);
+      progress.remove(id);
+      return false;
+    }
+    progress.remove(id);
+    throw e;
+  } finally {
+    void fileExplorerService.endCopy(id);
+  }
+}
+
+// Undoes a cancelled batch's completed items, newest first. A copy's freshly
+// created duplicates are permanently deleted (they're brand-new, so this
+// won't clutter the Recycle Bin); a cut's items are moved back to where they
+// came from (the source no longer exists, so it lands exactly there, no
+// renumber). Best-effort per item — one failure shouldn't abort the rest.
+// ponytail: the move-back runs with no progress bar (throwaway op id, so no
+// setOp) — fine for the common case; add a "reverting" bar if large cut
+// cancels prove slow enough to look hung.
+async function revertBatch(done: { src: string; dest: string }[], opKind: ClipboardOp) {
+  for (const { src, dest } of [...done].reverse()) {
+    try {
+      if (opKind === "copy") {
+        await fileExplorerService.deleteEntryPermanent(dest);
+      } else {
+        // Move back with a throwaway channel — revert shows no progress bar.
+        await fileExplorerService.moveEntry(crypto.randomUUID(), dest, src, new Channel<CopyProgressMsg>());
+      }
+    } catch {
+      // swallow — a partial revert is better than crashing the cancel
+    }
+  }
+}
 
 export function useFileExplorer() {
   const store = useFileExplorerStore();
@@ -221,25 +303,19 @@ export function useFileExplorer() {
     if (items.length === 0) return;
     const s = useFileExplorerStore.getState();
     try {
-      // Process sequentially for the same reason as pasteIntoCurrent —
-      // parallel copies would emit interleaved progress events.
-      for (const p of items) {
-        useFileExplorerStore.setState({ copyProgress: { total: 0, written: 0 } });
-        await op(p, joinPath(targetPath, basename(p)));
-      }
+      await runCopyBatch(items, op, isCopy ? "copy" : "cut", targetPath);
       s.clearSelection();
       // refreshTabsShowing (not just refresh()) since dropping onto another
       // tab (TabBar's drag-to-switch) already made that tab active by the
       // time this runs — a plain refresh() only catches the destination;
       // the tab the file came *from* is now a background tab and needs
       // refreshing too, or it keeps showing the file until manually
-      // refreshed. Skipped for a copy — the source is untouched.
+      // refreshed. Skipped for a copy — the source is untouched. Refreshes
+      // even on cancel: items finished before the cancel really moved.
       const affected = new Set(isCopy ? [targetPath] : [targetPath, ...items.map((p) => dirname(p))]);
       s.refreshTabsShowing([...affected]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
-    } finally {
-      useFileExplorerStore.setState({ copyProgress: null });
     }
   }, []);
 
@@ -388,15 +464,11 @@ export function useFileExplorer() {
 
     const op = clip.op === "copy" ? fileExplorerService.copyEntry : fileExplorerService.moveEntry;
     try {
-      // Process sequentially (not Promise.all) so the UI stays responsive
-      // and per-file progress is visible — parallel copies would emit
-      // interleaved progress events from the backend with no way to
-      // disambiguate which file they belong to.
-      for (const p of paths) {
-        useFileExplorerStore.setState({ copyProgress: { total: 0, written: 0 } });
-        await op(p, joinPath(store.currentPath, basename(p)));
-      }
-      if (clip.op === "cut") store.clearClipboard();
+      const completed = await runCopyBatch(paths, op, clip.op, store.currentPath);
+      // Only clear the cut clipboard on full completion — a cancel reverts the
+      // move (sources are back where they were), so keeping the clipboard lets
+      // the user retry the paste elsewhere.
+      if (clip.op === "cut" && completed) store.clearClipboard();
       // A cut can be copied in one tab, then pasted after switching to
       // another — refreshTabsShowing catches the (now background) source
       // tab too, not just this one. Skipped for a copy, same reasoning as
@@ -405,8 +477,6 @@ export function useFileExplorer() {
       store.refreshTabsShowing([...new Set(affected)]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
-    } finally {
-      useFileExplorerStore.setState({ copyProgress: null });
     }
   }
 

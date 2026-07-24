@@ -107,10 +107,6 @@ interface FileExplorerState {
   // "use the current selection", the original behavior.
   promptTarget: Entry | null;
   clipboard: ClipboardState | null;
-  // Live progress for an in-flight copy/move operation. Non-null means a
-  // copy/move is underway; the UI renders a progress bar. Updated by the
-  // "copy-progress" Tauri event emitted from fs_ops's chunked copy.
-  copyProgress: { total: number; written: number } | null;
   deleteConfirmOpen: boolean;
   deleteTarget: Entry[] | null;
   // Entries Windows refused to recycle (paths too long / too big) — set when
@@ -282,7 +278,6 @@ export const useFileExplorerStore = create<FileExplorerState>()(
         activePrompt: null,
         promptTarget: null,
         clipboard: null,
-        copyProgress: null,
         deleteConfirmOpen: false,
         deleteTarget: null,
         permanentDeleteTarget: null,

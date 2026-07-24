@@ -64,6 +64,7 @@ pub fn run() {
             app.manage(content_tx);
             app.manage(status);
             app.manage(terminal::TerminalManager::default());
+            app.manage(fs_ops::CopyCancels::default());
 
             Ok(())
         })
@@ -79,6 +80,8 @@ pub fn run() {
             fs_ops::delete_entry_permanent,
             fs_ops::copy_entry,
             fs_ops::move_entry,
+            fs_ops::cancel_copy,
+            fs_ops::end_copy,
             fs_ops::open_with_dialog,
             fs_ops::show_properties,
             indexer::index_status,

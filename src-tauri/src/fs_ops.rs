@@ -1,11 +1,59 @@
 use crate::database;
 use crate::indexer::ContentEventSender;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Error, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use tauri::{AppHandle, Emitter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tauri::ipc::Channel;
+
+// Per-operation cancel flags, keyed by the batch's op_id, managed as Tauri
+// state. Each paste/drop batch owns one flag; copy_entry/move_entry create it
+// on first use, the copy loop polls it, cancel_copy(op_id) sets it, and
+// end_copy(op_id) removes it when the batch finishes. Keyed (not one global
+// flag) so two batches running at once — paste in one tab while another is
+// still copying — can be cancelled independently.
+#[derive(Default)]
+pub struct CopyCancels(pub Mutex<HashMap<String, Arc<AtomicBool>>>);
+
+impl CopyCancels {
+    fn flag_for(&self, op_id: &str) -> Arc<AtomicBool> {
+        self.0
+            .lock()
+            .unwrap()
+            .entry(op_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
+    }
+}
+
+// Sentinel error text a cancelled copy returns, so the frontend can tell a
+// deliberate cancel apart from a real failure and not show an error banner.
+const COPY_CANCELLED: &str = "__copy_cancelled__";
+
+// Bundles what the tracked (progress-emitting) copy path needs: a closure to
+// report progress and the cancel flag to poll. `emit` is a closure rather
+// than the AppHandle directly so the copy loop has no Tauri dependency and is
+// unit-testable with a no-op emitter (see the cancel test below).
+struct CopyCtx<'a> {
+    emit: &'a dyn Fn(CopyProgress),
+    cancel: &'a AtomicBool,
+}
+
+#[tauri::command]
+pub fn cancel_copy(state: tauri::State<'_, CopyCancels>, op_id: String) {
+    if let Some(flag) = state.0.lock().unwrap().get(&op_id) {
+        flag.store(true, Ordering::SeqCst);
+    }
+}
+
+#[tauri::command]
+pub fn end_copy(state: tauri::State<'_, CopyCancels>, op_id: String) {
+    state.0.lock().unwrap().remove(&op_id);
+}
 
 #[derive(Serialize)]
 pub struct Entry {
@@ -239,16 +287,28 @@ fn recycle_to_bin(_path: &str) -> Result<bool, String> {
 // `.await` inside, so no MutexGuard is held across a suspend point.
 #[tauri::command]
 pub async fn copy_entry(
-    app: AppHandle,
+    op_id: String,
     from: String,
     to: String,
+    on_progress: Channel<CopyProgress>,
     conn: tauri::State<'_, Mutex<rusqlite::Connection>>,
     content_tx: tauri::State<'_, ContentEventSender>,
-) -> Result<(), String> {
+    cancels: tauri::State<'_, CopyCancels>,
+) -> Result<String, String> {
     let from = Path::new(&from);
-    let to = copy_entry_inner(from, Path::new(&to), Some(&app))?;
+    let flag = cancels.flag_for(&op_id);
+    // Progress goes back on this invocation's own channel — scoped to this
+    // call, so there's no global event to route by id and no way for one
+    // batch's updates to land on another's bar.
+    let emit = |p: CopyProgress| {
+        let _ = on_progress.send(p);
+    };
+    let ctx = CopyCtx { emit: &emit, cancel: &flag };
+    let to = copy_entry_inner(from, Path::new(&to), Some(&ctx))?;
     index_tree(&conn, &content_tx, &to);
-    Ok(())
+    // Return the actual destination (unique_destination may have numbered it)
+    // so the frontend can revert exactly this file on cancel, not guess.
+    Ok(to.to_string_lossy().into_owned())
 }
 
 // async for the same reason as copy_entry: keep the copy off the main thread
@@ -256,12 +316,14 @@ pub async fn copy_entry(
 // the window.
 #[tauri::command]
 pub async fn move_entry(
-    app: AppHandle,
+    op_id: String,
     from: String,
     to: String,
+    on_progress: Channel<CopyProgress>,
     conn: tauri::State<'_, Mutex<rusqlite::Connection>>,
     content_tx: tauri::State<'_, ContentEventSender>,
-) -> Result<(), String> {
+    cancels: tauri::State<'_, CopyCancels>,
+) -> Result<String, String> {
     let from_path = PathBuf::from(&from);
     let to = unique_destination(Path::new(&to));
     if fs::rename(&from_path, &to).is_ok() {
@@ -276,7 +338,7 @@ pub async fn move_entry(
         if let Ok(meta) = fs::metadata(&to) {
             content_tx.queue_index(&to, database::modified_ms(&meta));
         }
-        return Ok(());
+        return Ok(to.to_string_lossy().into_owned());
     }
     // ponytail: fs::rename fails across drives/volumes; fall back to
     // copy-then-remove-original. Upgrade to a progress-tracked move if
@@ -284,7 +346,12 @@ pub async fn move_entry(
     // (line above) — copy_entry_inner uniquifying it again is a safe no-op
     // (nothing else can have claimed that exact name in between), not a
     // second, different rename.
-    let to = copy_entry_inner(&from_path, &to, Some(&app))?;
+    let flag = cancels.flag_for(&op_id);
+    let emit = |p: CopyProgress| {
+        let _ = on_progress.send(p);
+    };
+    let ctx = CopyCtx { emit: &emit, cancel: &flag };
+    let to = copy_entry_inner(&from_path, &to, Some(&ctx))?;
     if from_path.is_dir() {
         fs::remove_dir_all(&from_path).map_err(|e| e.to_string())?;
     } else {
@@ -292,7 +359,7 @@ pub async fn move_entry(
     }
     database::remove_path(&conn, &from_path);
     index_tree(&conn, &content_tx, &to);
-    Ok(())
+    Ok(to.to_string_lossy().into_owned())
 }
 
 // ponytail: uses the real Win32 ShellExecuteExW API (what Explorer itself
@@ -389,7 +456,11 @@ fn copy_with_retry(from: &Path, to: &Path) -> std::io::Result<u64> {
 // frozen. This reads/writes in 1MB chunks and emits a progress event after
 // each chunk so the frontend can show a live progress bar.
 const COPY_CHUNK_SIZE: usize = 1024 * 1024; // 1 MB
-const PROGRESS_EVENT: &str = "copy-progress";
+// Throttle progress sends to ~10/sec regardless of file size. The old
+// "every 256KB" rule sent hundreds of messages for a large file, each one an
+// IPC round-trip that re-rendered the frontend — the actual source of the
+// UI lag during a big copy. Time-based caps that no matter how fast the disk.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Serialize)]
 pub struct CopyProgress {
@@ -400,16 +471,24 @@ pub struct CopyProgress {
 fn copy_with_progress(
     from: &Path,
     to: &Path,
-    app: &AppHandle,
+    ctx: &CopyCtx,
 ) -> std::io::Result<u64> {
     let total = fs::metadata(from)?.len();
     let mut src = fs::File::open(from)?;
     let mut dst = fs::File::create(to)?;
     let mut buf = vec![0u8; COPY_CHUNK_SIZE];
     let mut written: u64 = 0;
-    let mut last_emit: u64 = 0;
+    let mut last_emit = Instant::now();
 
     loop {
+        // Poll the cancel flag each chunk. On cancel, drop the destination
+        // handle and delete the half-written file so a cancelled copy leaves
+        // no partial garbage behind, then return the sentinel error.
+        if ctx.cancel.load(Ordering::Relaxed) {
+            drop(dst);
+            let _ = fs::remove_file(to);
+            return Err(Error::new(ErrorKind::Interrupted, COPY_CANCELLED));
+        }
         let n = src.read(&mut buf)?;
         if n == 0 {
             break;
@@ -417,15 +496,17 @@ fn copy_with_progress(
         dst.write_all(&buf[..n])?;
         written += n as u64;
 
-        // Emit at most once per 256KB to avoid flooding the event channel,
-        // but always emit on the final chunk so the frontend reaches 100%.
-        if written - last_emit >= 256 * 1024 || written == total {
-            let _ = app.emit(PROGRESS_EVENT, CopyProgress { total, written });
-            last_emit = written;
+        // Time-throttled so a fast disk doesn't flood the event channel.
+        if last_emit.elapsed() >= PROGRESS_INTERVAL {
+            (ctx.emit)(CopyProgress { total, written });
+            last_emit = Instant::now();
         }
     }
 
     dst.flush()?;
+    // Always send a final 100% update so the bar completes even if the whole
+    // copy finished inside one throttle window.
+    (ctx.emit)(CopyProgress { total, written });
     Ok(written)
 }
 
@@ -446,41 +527,61 @@ fn copy_with_progress(
 // `app` is optional: when provided, chunked progress events are emitted
 // for each file so the frontend can show a live progress bar. When `None`,
 // plain `fs::copy` is used (tests, internal callers without Tauri context).
-fn copy_entry_inner(from: &Path, to: &Path, app: Option<&AppHandle>) -> Result<PathBuf, String> {
+fn copy_entry_inner(from: &Path, to: &Path, ctx: Option<&CopyCtx>) -> Result<PathBuf, String> {
     let to = unique_destination(to);
-    match app {
-        Some(app) => {
+    let result: std::io::Result<()> = match ctx {
+        Some(ctx) => {
             if from.is_dir() {
-                copy_dir_all_tracked(from, &to, app).map_err(|e| e.to_string())?;
+                copy_dir_all_tracked(from, &to, ctx)
             } else {
-                copy_with_progress(from, &to, app).map_err(|e| e.to_string())?;
+                copy_with_progress(from, &to, ctx).map(|_| ())
             }
         }
         None => {
             if from.is_dir() {
-                copy_dir_all(from, &to).map_err(|e| e.to_string())?;
+                copy_dir_all(from, &to)
             } else {
-                copy_with_retry(from, &to).map_err(|e| e.to_string())?;
+                copy_with_retry(from, &to).map(|_| ())
             }
         }
+    };
+    if let Err(e) = result {
+        // A cancelled *directory* copy leaves a half-copied tree behind —
+        // copy_with_progress only removes the single in-flight file, not the
+        // files already copied. Remove the whole destination we were building
+        // so cancel actually undoes the paste (a single-file copy already
+        // cleaned itself up, so remove_file here is a harmless no-op).
+        if e.to_string() == COPY_CANCELLED {
+            let _ = if to.is_dir() {
+                fs::remove_dir_all(&to)
+            } else {
+                fs::remove_file(&to)
+            };
+        }
+        return Err(e.to_string());
     }
     Ok(to)
 }
 
-// Recursive directory copy that emits per-file progress events.
+// Recursive directory copy that emits per-file progress events. On cancel it
+// returns the sentinel error; copy_entry_inner then removes the whole partial
+// destination tree (so a cancelled folder paste leaves nothing behind).
 fn copy_dir_all_tracked(
     src: &Path,
     dst: &Path,
-    app: &AppHandle,
+    ctx: &CopyCtx,
 ) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
+        if ctx.cancel.load(Ordering::Relaxed) {
+            return Err(Error::new(ErrorKind::Interrupted, COPY_CANCELLED));
+        }
         let entry = entry?;
         let dst_path: PathBuf = dst.join(entry.file_name());
         if entry.file_type()?.is_dir() {
-            copy_dir_all_tracked(&entry.path(), &dst_path, app)?;
+            copy_dir_all_tracked(&entry.path(), &dst_path, ctx)?;
         } else {
-            copy_with_progress(&entry.path(), &dst_path, app)?;
+            copy_with_progress(&entry.path(), &dst_path, ctx)?;
         }
     }
     Ok(())
@@ -590,6 +691,52 @@ mod tests {
             println!("{}: {}", d.name, d.path);
         }
         assert!(drives.iter().any(|d| d.name == "C:"), "expected C: to resolve");
+    }
+
+    #[test]
+    fn cancelled_copy_aborts_and_removes_partial_destination() {
+        let base = std::env::temp_dir().join("schlag_test_copy_cancel");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        let src = base.join("big.bin");
+        fs::write(&src, vec![7u8; 4 * 1024 * 1024]).unwrap();
+        let dst = base.join("big_copy.bin");
+
+        // Flag already set → the loop bails on its first poll (before any
+        // bytes) and cleans up the empty destination it just created.
+        let cancel = AtomicBool::new(true);
+        let ctx = CopyCtx { emit: &|_| {}, cancel: &cancel };
+        let err = copy_with_progress(&src, &dst, &ctx).unwrap_err();
+        assert_eq!(err.to_string(), COPY_CANCELLED);
+        assert!(!dst.exists(), "cancelled copy must leave no partial file behind");
+
+        // Sanity: same source copies fine when not cancelled.
+        cancel.store(false, Ordering::SeqCst);
+        copy_with_progress(&src, &dst, &ctx).unwrap();
+        assert_eq!(fs::metadata(&dst).unwrap().len(), 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn cancelled_folder_copy_removes_the_whole_partial_tree() {
+        let base = std::env::temp_dir().join("schlag_test_copy_cancel_dir");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        let src = base.join("src_folder");
+        fs::create_dir_all(src.join("nested")).unwrap();
+        fs::write(src.join("a.txt"), b"a").unwrap();
+        fs::write(src.join("nested").join("b.txt"), b"b").unwrap();
+        let dst = base.join("dst_folder");
+
+        // Cancel is set before the copy runs, so copy_entry_inner must delete
+        // the destination directory it created — not leave a partial folder
+        // behind (the real bug: a cancelled folder paste left the folder).
+        let cancel = AtomicBool::new(true);
+        let ctx = CopyCtx { emit: &|_| {}, cancel: &cancel };
+        let err = copy_entry_inner(&src, &dst, Some(&ctx)).unwrap_err();
+        assert_eq!(err, COPY_CANCELLED);
+        assert!(!dst.exists(), "cancelled folder copy must leave no partial folder behind");
     }
 
     #[test]
