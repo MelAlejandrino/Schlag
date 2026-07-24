@@ -2,8 +2,10 @@ use crate::database;
 use crate::indexer::ContentEventSender;
 use serde::Serialize;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use tauri::{AppHandle, Emitter};
 
 #[derive(Serialize)]
 pub struct Entry {
@@ -230,16 +232,36 @@ fn recycle_to_bin(_path: &str) -> Result<bool, String> {
     Err("not supported on this platform".to_string())
 }
 
+// async so Tauri runs this on its worker runtime, not the main thread. A
+// synchronous command blocks the main thread, which on Windows is the window
+// message pump — a large copy freezes the whole window (drag/click/resize)
+// even though the WebView2 process keeps animating the progress bar. No
+// `.await` inside, so no MutexGuard is held across a suspend point.
 #[tauri::command]
-pub fn copy_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
+pub async fn copy_entry(
+    app: AppHandle,
+    from: String,
+    to: String,
+    conn: tauri::State<'_, Mutex<rusqlite::Connection>>,
+    content_tx: tauri::State<'_, ContentEventSender>,
+) -> Result<(), String> {
     let from = Path::new(&from);
-    let to = copy_entry_inner(from, Path::new(&to))?;
+    let to = copy_entry_inner(from, Path::new(&to), Some(&app))?;
     index_tree(&conn, &content_tx, &to);
     Ok(())
 }
 
+// async for the same reason as copy_entry: keep the copy off the main thread
+// so a large cross-volume move (which falls back to copy+delete) can't freeze
+// the window.
 #[tauri::command]
-pub fn move_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlite::Connection>>, content_tx: tauri::State<'_, ContentEventSender>) -> Result<(), String> {
+pub async fn move_entry(
+    app: AppHandle,
+    from: String,
+    to: String,
+    conn: tauri::State<'_, Mutex<rusqlite::Connection>>,
+    content_tx: tauri::State<'_, ContentEventSender>,
+) -> Result<(), String> {
     let from_path = PathBuf::from(&from);
     let to = unique_destination(Path::new(&to));
     if fs::rename(&from_path, &to).is_ok() {
@@ -262,7 +284,7 @@ pub fn move_entry(from: String, to: String, conn: tauri::State<'_, Mutex<rusqlit
     // (line above) — copy_entry_inner uniquifying it again is a safe no-op
     // (nothing else can have claimed that exact name in between), not a
     // second, different rename.
-    let to = copy_entry_inner(&from_path, &to)?;
+    let to = copy_entry_inner(&from_path, &to, Some(&app))?;
     if from_path.is_dir() {
         fs::remove_dir_all(&from_path).map_err(|e| e.to_string())?;
     } else {
@@ -361,6 +383,52 @@ fn copy_with_retry(from: &Path, to: &Path) -> std::io::Result<u64> {
     Err(last_err.expect("loop always sets this before exhausting MAX_COPY_ATTEMPTS"))
 }
 
+// ponytail: chunked copy with progress events for large files. `fs::copy`
+// is a single blocking syscall with no intermediate feedback — a multi-GB
+// file copy blocks the command for the entire duration and the UI appears
+// frozen. This reads/writes in 1MB chunks and emits a progress event after
+// each chunk so the frontend can show a live progress bar.
+const COPY_CHUNK_SIZE: usize = 1024 * 1024; // 1 MB
+const PROGRESS_EVENT: &str = "copy-progress";
+
+#[derive(Clone, Serialize)]
+pub struct CopyProgress {
+    pub total: u64,
+    pub written: u64,
+}
+
+fn copy_with_progress(
+    from: &Path,
+    to: &Path,
+    app: &AppHandle,
+) -> std::io::Result<u64> {
+    let total = fs::metadata(from)?.len();
+    let mut src = fs::File::open(from)?;
+    let mut dst = fs::File::create(to)?;
+    let mut buf = vec![0u8; COPY_CHUNK_SIZE];
+    let mut written: u64 = 0;
+    let mut last_emit: u64 = 0;
+
+    loop {
+        let n = src.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        dst.write_all(&buf[..n])?;
+        written += n as u64;
+
+        // Emit at most once per 256KB to avoid flooding the event channel,
+        // but always emit on the final chunk so the frontend reaches 100%.
+        if written - last_emit >= 256 * 1024 || written == total {
+            let _ = app.emit(PROGRESS_EVENT, CopyProgress { total, written });
+            last_emit = written;
+        }
+    }
+
+    dst.flush()?;
+    Ok(written)
+}
+
 // Non-Tauri version of copy_entry for internal use by move_entry's
 // cross-drive fallback (and by copy_entry itself, below). Applies
 // unique_destination internally and returns the actual path used — the
@@ -374,14 +442,48 @@ fn copy_with_retry(from: &Path, to: &Path) -> std::io::Result<u64> {
 // *different* destination succeeded immediately, proving there was no
 // ambient lock at all — the retry above was solving a different, real but
 // separate problem, not this one.
-fn copy_entry_inner(from: &Path, to: &Path) -> Result<PathBuf, String> {
+//
+// `app` is optional: when provided, chunked progress events are emitted
+// for each file so the frontend can show a live progress bar. When `None`,
+// plain `fs::copy` is used (tests, internal callers without Tauri context).
+fn copy_entry_inner(from: &Path, to: &Path, app: Option<&AppHandle>) -> Result<PathBuf, String> {
     let to = unique_destination(to);
-    if from.is_dir() {
-        copy_dir_all(from, &to).map_err(|e| e.to_string())?;
-    } else {
-        copy_with_retry(from, &to).map_err(|e| e.to_string())?;
+    match app {
+        Some(app) => {
+            if from.is_dir() {
+                copy_dir_all_tracked(from, &to, app).map_err(|e| e.to_string())?;
+            } else {
+                copy_with_progress(from, &to, app).map_err(|e| e.to_string())?;
+            }
+        }
+        None => {
+            if from.is_dir() {
+                copy_dir_all(from, &to).map_err(|e| e.to_string())?;
+            } else {
+                copy_with_retry(from, &to).map_err(|e| e.to_string())?;
+            }
+        }
     }
     Ok(to)
+}
+
+// Recursive directory copy that emits per-file progress events.
+fn copy_dir_all_tracked(
+    src: &Path,
+    dst: &Path,
+    app: &AppHandle,
+) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let dst_path: PathBuf = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all_tracked(&entry.path(), &dst_path, app)?;
+        } else {
+            copy_with_progress(&entry.path(), &dst_path, app)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -414,7 +516,7 @@ fn move_entry_inner(from: &str, to: &str) -> Result<(), String> {
     if fs::rename(from, &to).is_ok() {
         return Ok(());
     }
-    copy_entry_inner(Path::new(from), &to)?;
+    copy_entry_inner(Path::new(from), &to, None)?;
     let from_path = Path::new(from);
     if from_path.is_dir() {
         fs::remove_dir_all(from_path).map_err(|e| e.to_string())
@@ -499,7 +601,7 @@ mod tests {
         let src_file = base.join("a.txt");
         fs::write(&src_file, b"hello").unwrap();
         let dst_file = base.join("a_copy.txt");
-        copy_entry_inner(&src_file, &dst_file).unwrap();
+        copy_entry_inner(&src_file, &dst_file, None).unwrap();
         assert_eq!(fs::read_to_string(&dst_file).unwrap(), "hello");
 
         let src_dir = base.join("src_dir");
@@ -507,7 +609,7 @@ mod tests {
         fs::write(src_dir.join("root.txt"), b"root").unwrap();
         fs::write(src_dir.join("nested").join("deep.txt"), b"deep").unwrap();
         let dst_dir = base.join("dst_dir");
-        copy_entry_inner(&src_dir, &dst_dir).unwrap();
+        copy_entry_inner(&src_dir, &dst_dir, None).unwrap();
         assert_eq!(fs::read_to_string(dst_dir.join("root.txt")).unwrap(), "root");
         assert_eq!(fs::read_to_string(dst_dir.join("nested").join("deep.txt")).unwrap(), "deep");
 
@@ -523,14 +625,14 @@ mod tests {
         let src_file = base.join("a.txt");
         fs::write(&src_file, b"hello").unwrap();
         // Copying "into" the file's own directory means dest == src.
-        copy_entry_inner(&src_file, &src_file).unwrap();
+        copy_entry_inner(&src_file, &src_file, None).unwrap();
         assert_eq!(fs::read_to_string(base.join("a (1).txt")).unwrap(), "hello");
         assert!(src_file.exists(), "original must be untouched");
 
         let src_dir = base.join("folder");
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(src_dir.join("f.txt"), b"x").unwrap();
-        copy_entry_inner(&src_dir, &src_dir).unwrap();
+        copy_entry_inner(&src_dir, &src_dir, None).unwrap();
         assert!(base.join("folder (1)").join("f.txt").exists());
 
         let _ = fs::remove_dir_all(&base);

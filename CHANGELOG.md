@@ -2,6 +2,16 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.0.9] - 2026-07-24
+
+### Added
+
+- **Live progress bar for copy and paste:** Copying or pasting large files now shows a progress bar instead of appearing to hang with no feedback.
+
+### Fixed
+
+- **Copying or pasting large files no longer freezes the app:** Copy and move operations now run off the UI thread, so transferring a big file or folder no longer locks up the window (the progress bar animated but the window was unresponsive).
+
 ## [1.0.8] - 2026-07-24
 
 ### Added

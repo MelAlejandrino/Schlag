@@ -221,7 +221,12 @@ export function useFileExplorer() {
     if (items.length === 0) return;
     const s = useFileExplorerStore.getState();
     try {
-      await Promise.all(items.map((p) => op(p, joinPath(targetPath, basename(p)))));
+      // Process sequentially for the same reason as pasteIntoCurrent —
+      // parallel copies would emit interleaved progress events.
+      for (const p of items) {
+        useFileExplorerStore.setState({ copyProgress: { total: 0, written: 0 } });
+        await op(p, joinPath(targetPath, basename(p)));
+      }
       s.clearSelection();
       // refreshTabsShowing (not just refresh()) since dropping onto another
       // tab (TabBar's drag-to-switch) already made that tab active by the
@@ -233,6 +238,8 @@ export function useFileExplorer() {
       s.refreshTabsShowing([...affected]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
+    } finally {
+      useFileExplorerStore.setState({ copyProgress: null });
     }
   }, []);
 
@@ -381,7 +388,14 @@ export function useFileExplorer() {
 
     const op = clip.op === "copy" ? fileExplorerService.copyEntry : fileExplorerService.moveEntry;
     try {
-      await Promise.all(paths.map((p) => op(p, joinPath(store.currentPath, basename(p)))));
+      // Process sequentially (not Promise.all) so the UI stays responsive
+      // and per-file progress is visible — parallel copies would emit
+      // interleaved progress events from the backend with no way to
+      // disambiguate which file they belong to.
+      for (const p of paths) {
+        useFileExplorerStore.setState({ copyProgress: { total: 0, written: 0 } });
+        await op(p, joinPath(store.currentPath, basename(p)));
+      }
       if (clip.op === "cut") store.clearClipboard();
       // A cut can be copied in one tab, then pasted after switching to
       // another — refreshTabsShowing catches the (now background) source
@@ -391,6 +405,8 @@ export function useFileExplorer() {
       store.refreshTabsShowing([...new Set(affected)]);
     } catch (e) {
       useFileExplorerStore.setState({ error: String(e) });
+    } finally {
+      useFileExplorerStore.setState({ copyProgress: null });
     }
   }
 

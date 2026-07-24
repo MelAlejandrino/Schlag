@@ -1,5 +1,7 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { AlertCircle, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { useFileExplorerStore } from "./store/file-explorer.store";
 import { useFileExplorer } from "./useFileExplorer";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
 import { useTheme } from "./lib/useTheme";
@@ -25,6 +27,7 @@ import { WindowResizeHandles } from "./components/WindowResizeHandles";
 import { useExclusiveMenu } from "./lib/useExclusiveMenu";
 import { useClickOutsideClose } from "./lib/useClickOutsideClose";
 import { useSearchStore } from "./store/search.store";
+import { formatSize } from "./lib/format";
 
 export function FileExplorerView() {
   useTheme();
@@ -70,6 +73,17 @@ export function FileExplorerView() {
   useClickOutsideClose(!!explorer.contextMenu, explorer.closeContextMenu);
 
   useExclusiveMenu(!!explorer.contextMenu, explorer.closeContextMenu);
+
+  // Listen for chunked copy progress events from the Rust backend. Each
+  // event carries { total, written } for the current file being copied;
+  // the progress bar renders only while copyProgress is non-null (set by
+  // pasteIntoCurrent/dropOnto before the first file, cleared in finally).
+  useEffect(() => {
+    const unlisten = listen<{ total: number; written: number }>("copy-progress", (e) => {
+      useFileExplorerStore.setState({ copyProgress: e.payload });
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
 
   const searchInFolder = useCallback((folder: string) => {
     useSearchStore.getState().openSearchInFolder(folder);
@@ -325,9 +339,33 @@ export function FileExplorerView() {
         />
       )}
 
+      {explorer.copyProgress && (
+        <CopyProgressBar progress={explorer.copyProgress} />
+      )}
+
       <IndexStatusBadge />
 
       <WindowResizeHandles />
+    </div>
+  );
+}
+
+function CopyProgressBar({ progress }: { progress: { total: number; written: number } }) {
+  const pct = progress.total > 0 ? Math.min(100, (progress.written / progress.total) * 100) : 0;
+  const label = progress.total > 0
+    ? `${formatSize(progress.written, false)} / ${formatSize(progress.total, false)}`
+    : "Copying\u2026";
+  return (
+    <div className="fixed bottom-12 left-1/2 z-[80] w-80 -translate-x-1/2 rounded-lg border border-outline-variant bg-surface-container shadow-lg">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-container-highest">
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <span className="shrink-0 text-[11px] text-on-surface-variant">{label}</span>
+      </div>
     </div>
   );
 }
