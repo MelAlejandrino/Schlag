@@ -2,6 +2,19 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.1.0] - 2026-07-24
+
+### Added
+
+- **Cancel a copy or paste in progress:** Long transfers now have a Cancel button. Cancelling fully undoes the transfer — any files or folders already pasted are removed (or, for a move, put back where they came from), so a cancelled paste leaves nothing behind.
+- **Jump to the destination folder:** Each transfer shows a clickable folder button that navigates to where the items are being pasted.
+- **Clear "finished" state:** A transfer now shows "Finishing…" while it wraps up and a "✓ Copied/Moved to <folder>" check when done, so a completed transfer no longer looks stuck at 100%.
+
+### Changed
+
+- **Redesigned transfer progress:** Progress now appears as toasts in the bottom-right corner. Multiple transfers each get their own toast, the stack auto-collapses once several are running, and it scrolls instead of overflowing the window.
+- **Smoother, lighter progress updates:** Progress no longer causes UI lag during large copies — updates are throttled and no longer re-render the file list.
+
 ## [1.0.9] - 2026-07-24
 
 ### Added

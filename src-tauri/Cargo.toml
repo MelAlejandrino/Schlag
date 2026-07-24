@@ -1,6 +1,6 @@
 [package]
 name = "schlag"
-version = "1.0.9"
+version = "1.1.0"
 description = "A modern, high-performance desktop file explorer"
 edition = "2021"
 
