@@ -283,10 +283,11 @@ pub fn search_content(
     conn: tauri::State<Mutex<Connection>>,
     query: String,
     folder: Option<String>,
+    tags: Option<Vec<String>>,
     keyword_mode: bool,
 ) -> Result<Vec<ContentSearchResult>, String> {
     let conn = conn.lock().map_err(|e| e.to_string())?;
-    run_content_query(&state.index, &state.reader, &state.schema, &conn, &query, folder, keyword_mode)
+    run_content_query(&state.index, &state.reader, &state.schema, &conn, &query, folder, tags, keyword_mode)
 }
 
 // Tantivy's quoted-phrase syntax needs an embedded `"` escaped, or it would
@@ -312,6 +313,7 @@ fn keyword_query(raw: &str) -> String {
 // above so the actual search logic is directly callable from tests,
 // mirroring search.rs's build_query/run_query split from its own
 // #[tauri::command] search_files.
+#[allow(clippy::too_many_arguments)] // ponytail: flat params, not a params struct for one caller + tests.
 fn run_content_query(
     index: &Index,
     reader: &IndexReader,
@@ -319,6 +321,7 @@ fn run_content_query(
     conn: &Connection,
     query: &str,
     folder: Option<String>,
+    tags: Option<Vec<String>>,
     keyword_mode: bool,
 ) -> Result<Vec<ContentSearchResult>, String> {
     let searcher = reader.searcher();
@@ -337,7 +340,15 @@ fn run_content_query(
     let query_text = if keyword_mode { keyword_query(query) } else { phrase_query(query) };
     let parsed = parser.parse_query(&query_text).map_err(|e| e.to_string())?;
 
-    let overfetch = if folder.is_some() { RESULT_LIMIT * OVERFETCH_FACTOR } else { RESULT_LIMIT };
+    // Tags, like the folder scope, are a post-filter over Tantivy's ranking
+    // (the tag associations live in SQLite, not the content index) — same
+    // overfetch window, same documented ceiling.
+    let tag_filter = match tags {
+        Some(t) if !t.is_empty() => Some(paths_with_all_tags(conn, &t)?),
+        _ => None,
+    };
+    let overfetch =
+        if folder.is_some() || tag_filter.is_some() { RESULT_LIMIT * OVERFETCH_FACTOR } else { RESULT_LIMIT };
     let top_docs =
         searcher.search(&parsed, &TopDocs::with_limit(overfetch).order_by_score()).map_err(|e| e.to_string())?;
 
@@ -359,6 +370,12 @@ fn run_content_query(
 
         if let Some(prefix) = &folder_prefix {
             if !path_value.starts_with(prefix.as_str()) {
+                continue;
+            }
+        }
+
+        if let Some(tagged) = &tag_filter {
+            if !tagged.contains(&path_value) {
                 continue;
             }
         }
@@ -402,6 +419,29 @@ fn byte_ranges_to_utf16(text: &str, ranges: &[std::ops::Range<usize>]) -> Vec<(u
         .iter()
         .filter_map(|r| Some((*byte_to_utf16.get(&r.start)?, *byte_to_utf16.get(&r.end)?)))
         .collect()
+}
+
+// Every path carrying *all* the given tags — the same AND semantics
+// search.rs's own tags filter uses (HAVING COUNT(DISTINCT tags.id) = n).
+// ponytail: one query up front, filtered in memory; the tagged-file set is
+// small in practice. Revisit if someone tags six figures of files.
+fn paths_with_all_tags(conn: &Connection, tags: &[String]) -> Result<std::collections::HashSet<String>, String> {
+    let placeholders = (0..tags.len()).map(|i| format!("?{}", i + 1)).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT file_tags.file_path FROM file_tags
+         JOIN tags ON tags.id = file_tags.tag_id
+         WHERE tags.name IN ({placeholders})
+         GROUP BY file_tags.file_path
+         HAVING COUNT(DISTINCT tags.id) = ?{}",
+        tags.len() + 1
+    );
+    let mut params: Vec<&dyn rusqlite::ToSql> = tags.iter().map(|t| t as &dyn rusqlite::ToSql).collect();
+    let count = tags.len() as i64;
+    params.push(&count);
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params.as_slice(), |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
 fn lookup_metadata(conn: &Connection, path: &str) -> Option<(String, bool, u64, u64)> {
@@ -452,14 +492,28 @@ mod tests {
         )
         .unwrap();
 
-        let all = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "quick", None, false).unwrap();
+        let all = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "quick", None, None, false).unwrap();
         assert_eq!(all.len(), 2, "unscoped query should match both indexed documents");
 
-        let scoped = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "quick", Some("C:\\Docs".to_string()), false).unwrap();
+        let scoped = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "quick", Some("C:\\Docs".to_string()), None, false).unwrap();
         assert_eq!(scoped.len(), 1, "folder-scoped query should exclude matches outside the folder");
         assert_eq!(scoped[0].path, "C:\\Docs\\a.txt");
         assert_eq!(scoped[0].name, "a.txt");
         assert_eq!(scoped[0].size, 10);
+
+        // Tag filter: only b.txt is tagged, so a tagged content search must
+        // drop a.txt even though its content matches.
+        conn.execute("INSERT INTO tags (name, color) VALUES ('work', '#111')", []).unwrap();
+        conn.execute(
+            "INSERT INTO file_tags (file_path, tag_id) VALUES ('C:\\Other\\b.txt', (SELECT id FROM tags WHERE name='work'))",
+            [],
+        )
+        .unwrap();
+        let tagged =
+            run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "quick", None, Some(vec!["work".into()]), false)
+                .unwrap();
+        assert_eq!(tagged.len(), 1, "tag-filtered content search should only return tagged files");
+        assert_eq!(tagged[0].path, "C:\\Other\\b.txt");
 
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_file(&db_path);
@@ -503,13 +557,13 @@ mod tests {
         )
         .unwrap();
 
-        let results = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a file", None, false).unwrap();
+        let results = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a file", None, None, false).unwrap();
         assert_eq!(results.len(), 1, "only the document containing the exact phrase should match");
         assert_eq!(results[0].path, "C:\\Docs\\contiguous.txt");
 
         // Keyword mode: both documents contain "am", "a", and "file" somewhere,
         // regardless of order/contiguity — unlike phrase mode above.
-        let mut keyword_results = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a file", None, true).unwrap();
+        let mut keyword_results = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a file", None, None, true).unwrap();
         keyword_results.sort_by(|a, b| a.path.cmp(&b.path));
         assert_eq!(
             keyword_results.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
@@ -518,7 +572,7 @@ mod tests {
         );
 
         // A document missing one of the words should not match keyword mode either.
-        let partial = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a nonexistentword", None, true).unwrap();
+        let partial = run_content_query(&index, &index.reader().unwrap(), &schema, &conn, "am a nonexistentword", None, None, true).unwrap();
         assert!(partial.is_empty(), "keyword mode must not match when only a subset of words is present");
 
         let _ = std::fs::remove_dir_all(&dir);

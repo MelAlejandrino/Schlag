@@ -45,7 +45,7 @@ interface SearchState {
   setMode: (mode: SearchMode) => void;
   setKeywordMode: (keywordMode: boolean) => void;
   runSearch: (query: string, filters: SearchFilters, keywordMode: boolean) => Promise<void>;
-  runContentSearch: (query: string, folder: string | undefined, keywordMode: boolean) => Promise<void>;
+  runContentSearch: (query: string, filters: SearchFilters, keywordMode: boolean) => Promise<void>;
   clear: () => void;
   clearError: () => void;
 }
@@ -113,7 +113,7 @@ export const useSearchStore = create<SearchState>()((set) => ({
     }
   },
 
-  runContentSearch: async (query, folder, keywordMode) => {
+  runContentSearch: async (query, filters, keywordMode) => {
     const requestId = ++latestRequestId;
     if (!query.trim()) {
       if (requestId === latestRequestId) set({ contentResults: [], isSearching: false, error: null });
@@ -121,7 +121,7 @@ export const useSearchStore = create<SearchState>()((set) => ({
     }
     set({ isSearching: true });
     try {
-      const contentResults = await fileExplorerService.searchContent(query, folder, keywordMode);
+      const contentResults = await fileExplorerService.searchContent(query, filters.folder, filters.tags, keywordMode);
       if (requestId === latestRequestId) set({ contentResults, isSearching: false, error: null });
     } catch (e) {
       if (requestId === latestRequestId) set({ isSearching: false, error: String(e) });

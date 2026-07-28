@@ -11,6 +11,7 @@ import { useEntryKeyboard } from "../lib/useEntryKeyboard";
 import type { GroupBy } from "../lib/groupEntries";
 import { toDisplayItems } from "../lib/groupEntries";
 import type { SortDirection, SortKey } from "../lib/sortEntries";
+import { SnippetText, snippetOf } from "./SnippetText";
 import type { Entry } from "../file-explorer.types";
 
 interface EntryTableProps {
@@ -72,6 +73,16 @@ const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
 // virtualizer never needs to dynamically remeasure to correct it.
 const HEADER_ROW_SIZE = 33;
 const ENTRY_ROW_SIZE = 33;
+// A content-search row adds a snippet strip under the columns: one 15px
+// line plus 6px of breathing room. One line, not two — the backend caps a
+// fragment at 160 characters, which fits a single line at any normal window
+// width, so a second line is dead space in the common case and a taller row
+// costs real density. Overflow truncates with the full text on hover.
+// Pinned exactly, so the virtualizer's measurement stays deterministic —
+// same requirement as every other row height here.
+const SNIPPET_LINES = 1;
+const SNIPPET_STRIP_SIZE = 21;
+const SNIPPET_ROW_SIZE = ENTRY_ROW_SIZE + SNIPPET_STRIP_SIZE;
 
 type Row = { kind: "header"; label: string } | { kind: "entry"; entry: Entry };
 
@@ -162,7 +173,11 @@ export function EntryTable({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => (rows[i].kind === "header" ? HEADER_ROW_SIZE : ENTRY_ROW_SIZE),
+    estimateSize: (i) => {
+      const row = rows[i];
+      if (row.kind === "header") return HEADER_ROW_SIZE;
+      return snippetOf(row.entry) ? SNIPPET_ROW_SIZE : ENTRY_ROW_SIZE;
+    },
     overscan: 8,
     // Measure each row but round to the nearest integer — getBoundingClientRect
     // returns subpixel values (e.g. 32.5px for a 33px row) due to zoom/HiDPI
@@ -401,6 +416,7 @@ const EntryRow = memo(function EntryRow({
         },
       }
     : {};
+  const content = snippetOf(entry);
   return (
     <div
       role="row"
@@ -416,44 +432,68 @@ const EntryRow = memo(function EntryRow({
         onContextMenu(entry, e.clientX, e.clientY);
       }}
       {...dropProps}
-      className={`grid select-none overflow-hidden border-b border-surface-container transition-colors duration-150 hover:bg-surface-container ${
+      className={`flex select-none flex-col overflow-hidden border-b border-surface-container transition-colors duration-150 hover:bg-surface-container ${
         selected ? "bg-surface-container-high" : ""
       } ${cut ? "opacity-50" : ""} ${
         entry.is_dir && dropTarget.isOver ? "outline-2 -outline-offset-2 outline-primary-container" : ""
       }`}
-      // Fixed height (matching ENTRY_ROW_SIZE exactly) — content no longer
-      // wraps (see the name cell's truncate below), so the virtualizer's
-      // measureElement always rounds to exactly 33px, keeping getTotalSize()
-      // deterministic and the scrollbar thumb stable.
-      style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, height: ENTRY_ROW_SIZE }}
+      // Fixed height — content never wraps (the name cell truncates, the
+      // snippet strip line-clamps), so the virtualizer's measureElement
+      // always rounds to exactly this, keeping getTotalSize() deterministic
+      // and the scrollbar thumb stable.
+      style={{ height: content ? SNIPPET_ROW_SIZE : ENTRY_ROW_SIZE }}
     >
-      <div role="gridcell" className="flex min-w-0 items-center px-3 text-[13px]">
-        <span className={`flex min-w-0 items-center gap-2 ${selected ? "text-primary" : "text-on-surface"}`}>
-          {entry.is_dir ? (
-            <Folder size={15} strokeWidth={1.75} className="shrink-0 text-primary" />
-          ) : (
-            <FileTypeIcon name={entry.name} size={15} strokeWidth={1.75} className="shrink-0 text-outline" />
-          )}
-          <span className="min-w-0 truncate" title={entry.name}>
-            {entry.name}
-          </span>
-        </span>
-        {getFileTags && (
-          <FileTagChips tags={getFileTags(entry.path)} max={2} className="ml-2 flex shrink-0 items-center gap-1" />
-        )}
-      </div>
-      <div role="gridcell" className="flex items-center px-3 font-mono text-[12px] text-on-surface-variant">
-        {formatDate(entry.modified_ms)}
-      </div>
-      <div role="gridcell" className="flex items-center px-3 font-mono text-[12px] text-on-surface-variant">
-        {entryTypeLabel(entry)}
-      </div>
+      {/* role="presentation" so the gridcells below still count as this
+          row's own children despite the wrapper the snippet strip needs. */}
       <div
-        role="gridcell"
-        className="flex items-center justify-end px-3 text-right font-mono text-[12px] text-on-surface-variant"
+        role="presentation"
+        className="grid shrink-0"
+        style={{ gridTemplateColumns: GRID_TEMPLATE_COLUMNS, height: ENTRY_ROW_SIZE }}
       >
-        {formatSize(entry.size, entry.is_dir)}
+        <div role="gridcell" className="flex min-w-0 items-center px-3 text-[13px]">
+          <span className={`flex min-w-0 items-center gap-2 ${selected ? "text-primary" : "text-on-surface"}`}>
+            {entry.is_dir ? (
+              <Folder size={15} strokeWidth={1.75} className="shrink-0 text-primary" />
+            ) : (
+              <FileTypeIcon name={entry.name} size={15} strokeWidth={1.75} className="shrink-0 text-outline" />
+            )}
+            <span className="min-w-0 truncate" title={entry.name}>
+              {entry.name}
+            </span>
+          </span>
+          {getFileTags && (
+            <FileTagChips tags={getFileTags(entry.path)} max={2} className="ml-2 flex shrink-0 items-center gap-1" />
+          )}
+        </div>
+        <div role="gridcell" className="flex items-center px-3 font-mono text-[12px] text-on-surface-variant">
+          {formatDate(entry.modified_ms)}
+        </div>
+        <div role="gridcell" className="flex items-center px-3 font-mono text-[12px] text-on-surface-variant">
+          {entryTypeLabel(entry)}
+        </div>
+        <div
+          role="gridcell"
+          className="flex items-center justify-end px-3 text-right font-mono text-[12px] text-on-surface-variant"
+        >
+          {formatSize(entry.size, entry.is_dir)}
+        </div>
       </div>
+
+      {content && (
+        // A gridcell, not a bare <p>: role="row" only permits cell children,
+        // and this one spans the row rather than sitting in a column.
+        <div role="gridcell" className="min-w-0">
+          <SnippetText
+            result={content}
+            lines={SNIPPET_LINES}
+            height={SNIPPET_STRIP_SIZE - 6}
+            // Indented to the filename's own text baseline (12px cell
+            // padding + 15px icon + 8px gap), so the quote hangs off the
+            // name rather than starting a second, competing left edge.
+            className="pr-3 pl-[35px]"
+          />
+        </div>
+      )}
     </div>
   );
 });

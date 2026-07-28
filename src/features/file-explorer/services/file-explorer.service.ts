@@ -60,8 +60,8 @@ export const fileExplorerService = {
     // keywordMode here, unlike SearchFilters' own snake_case fields.
     invoke<Entry[]>("search_files", { query, filters, keywordMode }),
   recentFiles: () => invoke<Entry[]>("recent_files"),
-  searchContent: (query: string, folder: string | undefined, keywordMode: boolean) =>
-    invoke<ContentSearchResult[]>("search_content", { query, folder, keywordMode }),
+  searchContent: (query: string, folder: string | undefined, tags: string[] | undefined, keywordMode: boolean) =>
+    invoke<ContentSearchResult[]>("search_content", { query, folder, tags, keywordMode }),
   // Not an invoke() call, but still a Tauri API — belongs here per this
   // file's own rule (the only place that calls Tauri APIs directly).
   assetUrl: (path: string) => convertFileSrc(path),

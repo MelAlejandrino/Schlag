@@ -87,7 +87,7 @@ export function useSearchTrigger() {
   useEffect(() => {
     if (!isOpen) return;
     if (mode === "content") {
-      runContentSearch(debouncedQuery, withScope(debouncedFilters, scopeToFolder, currentPath, scopeFolder).folder, keywordMode);
+      runContentSearch(debouncedQuery, withScope(debouncedFilters, scopeToFolder, currentPath, scopeFolder), keywordMode);
     } else {
       runSearch(debouncedQuery, withScope(debouncedFilters, scopeToFolder, currentPath, scopeFolder), keywordMode);
     }
@@ -107,7 +107,7 @@ export function useSearchTrigger() {
       if (!current.isOpen) return;
       const path = useFileExplorerStore.getState().currentPath;
       if (current.mode === "content") {
-        runContentSearch(current.query, withScope(current.filters, current.scopeToFolder, path, current.scopeFolder).folder, current.keywordMode);
+        runContentSearch(current.query, withScope(current.filters, current.scopeToFolder, path, current.scopeFolder), current.keywordMode);
       } else {
         runSearch(current.query, withScope(current.filters, current.scopeToFolder, path, current.scopeFolder), current.keywordMode);
       }

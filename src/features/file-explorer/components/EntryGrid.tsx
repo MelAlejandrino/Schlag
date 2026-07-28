@@ -7,6 +7,7 @@ import { useEntryKeyboard, type GridRow } from "../lib/useEntryKeyboard";
 import { previewKind } from "../lib/previewKind";
 import { FileTypeIcon } from "../lib/fileTypeIcon";
 import { FileTagChips } from "./FileTagChips";
+import { SnippetText, snippetOf } from "./SnippetText";
 import { fileExplorerService } from "../services/file-explorer.service";
 import type { DisplayItem, GroupBy } from "../lib/groupEntries";
 import { toDisplayItems } from "../lib/groupEntries";
@@ -41,6 +42,23 @@ const TILE_SIZE: Record<EntryGridProps["size"], { tile: number; icon: number }> 
   medium: { tile: 96, icon: 32 },
   large: { tile: 140, icon: 48 },
 };
+
+// Content-search results can't live in a 96px-wide square: a two-line
+// snippet at that width is four words per line, which is noise, not a
+// preview. So a listing of content results lays out as wide result cards
+// instead — icon left, name and snippet stacked to its right — and the view
+// size picks how wide/tall the card is rather than how big the square is.
+// Everything else (virtualization, column math, selection, drag) is
+// unchanged; only the cell's dimensions and internal layout differ.
+// Heights are exact, not padded guesses: 8px padding, a 16px name line, a
+// 2px gap, then `lines` x 15px of snippet, and 8px padding again. Large
+// isn't just a bigger square here — it buys a third line of the file's text,
+// which is the thing a content search is actually for.
+const CONTENT_CELL: Record<EntryGridProps["size"], { width: number; height: number; icon: number; lines: number }> = {
+  medium: { width: 300, height: 64, icon: 26, lines: 2 },
+  large: { width: 400, height: 79, icon: 34, lines: 3 },
+};
+const SNIPPET_LINE_HEIGHT = 15;
 
 // Matches the scroll container's own gap-1/p-2 Tailwind classes below —
 // hardcoded rather than read via getComputedStyle since those classes are
@@ -108,7 +126,12 @@ export function EntryGrid({
   getFileTags,
 }: EntryGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Content results all carry a snippet or none do (the listing is either a
+  // content search or a real folder), so the first entry decides the layout.
+  const contentMode = entries.length > 0 && snippetOf(entries[0]) !== null;
   const { tile, icon } = TILE_SIZE[size];
+  const contentCell = CONTENT_CELL[size];
+  const cellWidth = contentMode ? contentCell.width : tile;
   const [columns, setColumns] = useState(1);
   const backgroundDrop = useDropTarget(currentPath, onDrop);
 
@@ -122,13 +145,13 @@ export function EntryGrid({
     if (!el) return;
     const compute = () => {
       const available = el.clientWidth - CONTAINER_PADDING;
-      setColumns(Math.max(1, Math.floor((available + GAP) / (tile + GAP))));
+      setColumns(Math.max(1, Math.floor((available + GAP) / (cellWidth + GAP))));
     };
     compute();
     const ro = new ResizeObserver(compute);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [tile]);
+  }, [cellWidth]);
 
   // After-paint fallback: useLayoutEffect's compute() may read a stale
   // width if the parent flex layout (sidebar + main) hasn't settled yet.
@@ -139,15 +162,18 @@ export function EntryGrid({
     if (!el) return;
     const compute = () => {
       const available = el.clientWidth - CONTAINER_PADDING;
-      setColumns(Math.max(1, Math.floor((available + GAP) / (tile + GAP))));
+      setColumns(Math.max(1, Math.floor((available + GAP) / (cellWidth + GAP))));
     };
     compute();
     const t = setTimeout(compute, 50);
     return () => clearTimeout(t);
-    }, [tile, entries]);
+    }, [cellWidth, entries]);
 
   const rows = useMemo(() => buildRows(toDisplayItems(entries, groupBy), columns), [entries, groupBy, columns]);
-  const tileRowSize = tile + 32;
+  // Content cards pin their own height, and virtualized rows are positioned
+  // from measured heights (no row gap in between), so the estimate is the
+  // card height exactly — no padding guess to correct after the fact.
+  const tileRowSize = contentMode ? contentCell.height : tile + 32;
 
   // Vertical-only virtualization — rows are the virtualized dimension,
   // columns within a visible row render normally (no horizontal
@@ -329,7 +355,9 @@ export function EntryGrid({
                       <EntryTile
                         key={entry.path}
                         entry={entry}
-                        iconSize={icon}
+                        iconSize={contentMode ? contentCell.icon : icon}
+                        cellHeight={contentMode ? contentCell.height : undefined}
+                        snippetLines={contentCell.lines}
                         selected={selectedPaths.includes(entry.path)}
                         cut={cutPaths.includes(entry.path)}
                         onOpen={onOpen}
@@ -353,6 +381,10 @@ export function EntryGrid({
 interface EntryTileProps {
   entry: Entry;
   iconSize: number;
+  // Pinned only for content-result cards, so the virtualizer's row estimate
+  // matches the real card height exactly (a square tile sizes itself).
+  cellHeight?: number;
+  snippetLines: number;
   selected: boolean;
   cut: boolean;
   onOpen: (entry: Entry) => void;
@@ -366,6 +398,8 @@ interface EntryTileProps {
 const EntryTile = memo(function EntryTile({
   entry,
   iconSize,
+  cellHeight,
+  snippetLines,
   selected,
   cut,
   onOpen,
@@ -398,6 +432,9 @@ const EntryTile = memo(function EntryTile({
   // a visual one.
   const [imageFailed, setImageFailed] = useState(false);
   const showImage = !entry.is_dir && !imageFailed && previewKind(entry.name) === "image";
+  // A content-search hit reads left-to-right (icon, then name over the
+  // matching text) instead of as a centered square — see CONTENT_CELL.
+  const content = snippetOf(entry);
 
   return (
     <div
@@ -413,11 +450,12 @@ const EntryTile = memo(function EntryTile({
         onContextMenu(entry, e.clientX, e.clientY);
       }}
       {...dropProps}
-      className={`flex select-none flex-col items-center gap-1 rounded-lg p-2 text-center transition-colors duration-150 hover:bg-surface-container ${
-        selected ? "bg-surface-container-high" : ""
-      } ${cut ? "opacity-50" : ""} ${
+      className={`flex select-none rounded-lg p-2 transition-colors duration-150 hover:bg-surface-container ${
+        content ? "min-w-0 items-start gap-2.5 text-left" : "flex-col items-center gap-1 text-center"
+      } ${selected ? "bg-surface-container-high" : ""} ${cut ? "opacity-50" : ""} ${
         entry.is_dir && dropTarget.isOver ? "outline-2 -outline-offset-2 outline-primary-container" : ""
       }`}
+      style={content ? { height: cellHeight } : undefined}
     >
       {showImage ? (
         // Full-resolution image via the asset protocol — no resize/cache
@@ -445,11 +483,34 @@ const EntryTile = memo(function EntryTile({
       ) : (
         <FileTypeIcon name={entry.name} size={iconSize} strokeWidth={1.5} className="shrink-0 text-outline" />
       )}
-      <span className={`line-clamp-2 w-full break-words text-[12px] ${selected ? "text-primary" : "text-on-surface"}`}>
-        {entry.name}
-      </span>
-      {getFileTags && (
-        <FileTagChips tags={getFileTags(entry.path)} max={2} className="flex w-full flex-wrap items-center justify-center gap-1" />
+      {content ? (
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span
+              className={`min-w-0 truncate text-[12px] ${selected ? "text-primary" : "text-on-surface"}`}
+              title={entry.name}
+            >
+              {entry.name}
+            </span>
+            {getFileTags && (
+              <FileTagChips tags={getFileTags(entry.path)} max={1} className="flex shrink-0 items-center gap-1" />
+            )}
+          </span>
+          <SnippetText result={content} lines={snippetLines} height={snippetLines * SNIPPET_LINE_HEIGHT} />
+        </div>
+      ) : (
+        <>
+          <span className={`line-clamp-2 w-full break-words text-[12px] ${selected ? "text-primary" : "text-on-surface"}`}>
+            {entry.name}
+          </span>
+          {getFileTags && (
+            <FileTagChips
+              tags={getFileTags(entry.path)}
+              max={2}
+              className="flex w-full flex-wrap items-center justify-center gap-1"
+            />
+          )}
+        </>
       )}
     </div>
   );
