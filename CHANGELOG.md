@@ -2,6 +2,16 @@
 
 All notable changes to Schlag will be documented in this file.
 
+## [1.2.0] - 2026-07-28
+
+### Added
+
+- **See the matching text when you search file contents:** A content search result now shows the line it matched on, with your search term highlighted, so you can tell which file you actually want without opening each one. List view shows it under the filename; Medium and Large icon views switch to wider result cards so there's room for two or three lines of the file's text.
+
+### Fixed
+
+- **Tag filters now work when searching file contents:** Picking a tag while searching contents had no effect — every match came back regardless of its tags. Tag filtering now applies the same way it already did for filename search (a file must carry all the selected tags).
+
 ## [1.1.1] - 2026-07-24
 
 ### Fixed
